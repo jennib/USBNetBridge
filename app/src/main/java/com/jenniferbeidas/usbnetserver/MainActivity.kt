@@ -16,6 +16,7 @@ import android.net.ConnectivityManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,13 +48,12 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.hoho.android.usbserial.driver.UsbSerialPort
-import com.hoho.android.usbserial.driver.UsbSerialProber
+import com.felhr.usbserial.UsbSerialDevice
+import com.felhr.usbserial.UsbSerialInterface
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.ServerSocket
-import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
@@ -67,11 +67,14 @@ class MainActivity : ComponentActivity() {
     private val networkStatusText = mutableStateOf("")
     private val cameraStatusText = mutableStateOf("")
 
+    private var serialDevice: UsbSerialDevice? = null
     private var serialServerSocket: ServerSocket? = null
     private val serialServerPort = 8888
 
     private var cameraServerSocket: ServerSocket? = null
     private val cameraServerPort = 8889
+
+    private var imageAnalysis: ImageAnalysis? = null
 
     private val hasCameraPermission = mutableStateOf(false)
 
@@ -79,7 +82,6 @@ class MainActivity : ComponentActivity() {
         if (isGranted) {
             statusText.value = "Camera permission granted."
             hasCameraPermission.value = true
-            findAndConnectDevice()
         } else {
             statusText.value = "Camera permission denied."
         }
@@ -107,18 +109,33 @@ class MainActivity : ComponentActivity() {
         }
 
         updateCameraPermission()
-        handleIntent(intent)
     }
 
     private fun updateCameraPermission() {
         when (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)) {
             PackageManager.PERMISSION_GRANTED -> {
+                statusText.value = "Waiting for USB device..."
                 hasCameraPermission.value = true
-                findAndConnectDevice()
             }
             else -> {
                 requestPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handleIntent(intent)
+        updateKeepScreenOn()
+    }
+
+    private fun updateKeepScreenOn() {
+        val sharedPreferences = getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
+        val keepScreenOn = sharedPreferences.getBoolean("keep_screen_on", false)
+        if (keepScreenOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -127,37 +144,36 @@ class MainActivity : ComponentActivity() {
         unregisterReceiver(usbPermissionReceiver)
         serialServerSocket?.close()
         cameraServerSocket?.close()
+        serialDevice?.close()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent) {
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
-            findAndConnectDevice()
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+            device?.let {
+                findAndConnectDevice(it)
+            }
         }
     }
 
-    private fun findAndConnectDevice() {
+    private fun findAndConnectDevice(device: UsbDevice) {
         if (!hasCameraPermission.value) {
             statusText.value = "Waiting for camera permission..."
             return
         }
 
-        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
-        if (availableDrivers.isEmpty()) {
-            statusText.value = "No USB serial devices found. Please connect your usb serial device."
-            return
-        }
-
-        val driver = availableDrivers[0]
-        val device = driver.device
-
         if (!usbManager.hasPermission(device)) {
-            statusText.value = "Requesting USB permission..."
+            statusText.value = "Requesting USB permission for ${device.deviceName}"
             val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), PendingIntent.FLAG_IMMUTABLE)
             usbManager.requestPermission(device, permissionIntent)
             return
@@ -167,45 +183,45 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupSerialConnection(device: UsbDevice) {
-        val driver = UsbSerialProber.getDefaultProber().probeDevice(device)
-        if (driver == null) {
-            statusText.value = "No driver found for the device."
-            return
-        }
-
-        val port = driver.ports[0]
-        val connection = usbManager.openDevice(driver.device)
+        val connection = usbManager.openDevice(device)
         if (connection == null) {
             statusText.value = "Could not open device. Is permission granted?"
             return
         }
 
-        try {
-            port.open(connection)
+        serialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
+        if (serialDevice != null && serialDevice!!.open()) {
             val sharedPreferences = getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
             val baudRate = sharedPreferences.getInt("baud_rate", 115200)
             val dataBits = sharedPreferences.getInt("data_bits", 8)
-            val stopBits = sharedPreferences.getInt("stop_bits", UsbSerialPort.STOPBITS_1)
-            val parity = sharedPreferences.getInt("parity", UsbSerialPort.PARITY_NONE)
+            val stopBits = sharedPreferences.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1)
+            val parity = sharedPreferences.getInt("parity", UsbSerialInterface.PARITY_NONE)
 
-            port.setParameters(baudRate, dataBits, stopBits, parity)
-            statusText.value = "Serial port connected."
-            startSerialNetworkServer(port)
-        } catch (e: IOException) {
+            serialDevice?.setBaudRate(baudRate)
+            serialDevice?.setDataBits(dataBits)
+            serialDevice?.setStopBits(stopBits)
+            serialDevice?.setParity(parity)
+
+            statusText.value = "Connected to ${device.deviceName}"
+            startSerialNetworkServer(serialDevice!!)
+            startCameraStreamServer()
+        } else {
             statusText.value = "Error setting up serial port."
-            Log.e(tag, "Error setting up serial port", e)
         }
     }
 
-    private fun startSerialNetworkServer(serialPort: UsbSerialPort) {
-        val ipAddress = getLocalIpAddress()
-        if (ipAddress == null) {
-            networkStatusText.value = "Could not get IP address. Make sure you are connected to a Wi-Fi network."
-            return
-        }
-
+    private fun startSerialNetworkServer(serialPort: UsbSerialDevice) {
         thread {
             try {
+                Thread.sleep(2000) // Wait for network to be ready on boot
+                val ipAddress = getLocalIpAddress()
+                if (ipAddress == null) {
+                    runOnUiThread {
+                        networkStatusText.value = "Could not get IP address. Make sure you are connected to a Wi-Fi network."
+                    }
+                    return@thread
+                }
+
                 serialServerSocket = ServerSocket(serialServerPort)
                 runOnUiThread {
                     networkStatusText.value = "Serial: $ipAddress:$serialServerPort"
@@ -224,15 +240,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startCameraStreamServer(imageAnalysis: ImageAnalysis) {
-        val ipAddress = getLocalIpAddress()
-        if (ipAddress == null) {
-            cameraStatusText.value = "Could not get IP address."
-            return
-        }
-
+    private fun startCameraStreamServer() {
+        val analysis = imageAnalysis ?: return
         thread {
             try {
+                Thread.sleep(2000) // Wait for network to be ready on boot
+                val ipAddress = getLocalIpAddress()
+                if (ipAddress == null) {
+                    runOnUiThread {
+                        cameraStatusText.value = "Could not get IP address."
+                    }
+                    return@thread
+                }
+
                 cameraServerSocket = ServerSocket(cameraServerPort)
                 runOnUiThread {
                     cameraStatusText.value = "Camera: $ipAddress:$cameraServerPort"
@@ -253,7 +273,7 @@ class MainActivity : ComponentActivity() {
                                 "Content-Type: multipart/x-mixed-replace; boundary=--boundary\r\n\r\n").toByteArray()
                     )
 
-                    imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                    analysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
                         val jpegBytes = imageProxy.toJpeg()
                         if (jpegBytes != null) {
                             try {
@@ -267,7 +287,7 @@ class MainActivity : ComponentActivity() {
                                 outputStream.flush()
                             } catch (e: IOException) {
                                 Log.d(tag, "Client disconnected from camera stream")
-                                imageAnalysis.clearAnalyzer()
+                                analysis.clearAnalyzer()
                                 clientSocket.close()
                             }
                         }
@@ -298,7 +318,6 @@ class MainActivity : ComponentActivity() {
 
         val nv21 = ByteArray(ySize + uSize + vSize)
 
-        //U and V are swapped
         yBuffer.get(nv21, 0, ySize)
         vBuffer.get(nv21, ySize, vSize)
         uBuffer.get(nv21, ySize + vSize, uSize)
@@ -309,7 +328,15 @@ class MainActivity : ComponentActivity() {
         return out.toByteArray()
     }
 
-    private fun bridgeStreams(clientSocket: java.net.Socket, serialPort: UsbSerialPort) {
+    private fun bridgeStreams(clientSocket: java.net.Socket, serialPort: UsbSerialDevice) {
+        serialPort.read { data ->
+            try {
+                clientSocket.getOutputStream().write(data)
+            } catch (e: IOException) {
+                Log.e(tag, "Error writing to network from serial", e)
+            }
+        }
+
         thread {
             try {
                 val buffer = ByteArray(4096)
@@ -317,25 +344,10 @@ class MainActivity : ComponentActivity() {
                 while (clientSocket.isConnected) {
                     val numBytesRead = socketIn.read(buffer)
                     if (numBytesRead == -1) break
-                    serialPort.write(buffer.copyOf(numBytesRead), 200)
+                    serialPort.write(buffer.copyOf(numBytesRead))
                 }
             } catch (e: IOException) {
                 Log.e(tag, "Error writing to serial from network", e)
-            }
-        }
-
-        thread {
-            try {
-                val buffer = ByteArray(4096)
-                val socketOut = clientSocket.getOutputStream()
-                while (clientSocket.isConnected) {
-                    val numBytesRead = serialPort.read(buffer, 200)
-                    if (numBytesRead > 0) {
-                        socketOut.write(buffer, 0, numBytesRead)
-                    }
-                }
-            } catch (e: IOException) {
-                Log.e(tag, "Error reading from serial to network", e)
             }
         }
     }
@@ -439,13 +451,14 @@ class MainActivity : ComponentActivity() {
                     val imageAnalysis = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
+                    this@MainActivity.imageAnalysis = imageAnalysis // Store the instance
 
                     val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
                     try {
                         cameraProvider.unbindAll()
                         cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis)
-                        startCameraStreamServer(imageAnalysis)
+                        startCameraStreamServer() // Initial start
                     } catch (e: Exception) {
                         Log.e("CameraPreview", "Use case binding failed", e)
                     }
