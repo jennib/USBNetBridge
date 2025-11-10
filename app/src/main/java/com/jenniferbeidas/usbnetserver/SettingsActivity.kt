@@ -16,11 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -36,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import com.felhr.usbserial.UsbSerialInterface
 
 class SettingsActivity : ComponentActivity() {
@@ -76,7 +79,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
         SettingsDropdown(label = "Stop Bits", selectedOption = stopBits, options = stopBitsOptions.keys.toList()) { stopBits = it }
         SettingsDropdown(label = "Parity", selectedOption = parity, options = parityOptions.keys.toList()) { parity = it }
 
-        Divider(modifier = Modifier.padding(vertical = 16.dp))
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
         Text("App Settings", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
         Row(
@@ -100,7 +103,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
 
         Button(onClick = {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            intent.data = Uri.parse("package:" + context.packageName)
+            intent.data = "package:${context.packageName}".toUri()
             context.startActivity(intent)
         }, colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)) {
             Text("Open App System Settings")
@@ -113,21 +116,20 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
         }
 
         Button(onClick = {
-            sharedPreferences.edit().clear().apply()
+            sharedPreferences.edit { clear() }
             onSave()
         }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.padding(top = 8.dp)) {
             Text("Reset to Default")
         }
 
         Button(onClick = {
-            with(sharedPreferences.edit()) {
+            sharedPreferences.edit {
                 putInt("baud_rate", baudRate.toInt())
                 putInt("data_bits", dataBits.toInt())
                 putInt("stop_bits", stopBitsOptions.getValue(stopBits))
                 putInt("parity", parityOptions.getValue(parity))
                 putBoolean("start_on_boot", startOnBoot)
                 putBoolean("keep_screen_on", keepScreenOn)
-                apply()
             }
             onSave()
         }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
@@ -153,7 +155,7 @@ private fun SettingsDropdown(label: String, selectedOption: String, options: Lis
                 onValueChange = {},
                 readOnly = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.menuAnchor()
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable)
             )
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 options.forEach { option ->
