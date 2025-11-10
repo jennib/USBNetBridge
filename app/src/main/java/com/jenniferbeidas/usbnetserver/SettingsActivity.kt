@@ -2,7 +2,6 @@ package com.jenniferbeidas.usbnetserver
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -21,7 +20,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -109,7 +107,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
             Text("Open App System Settings")
         }
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(onClick = { context.startActivity(Intent(context, PrivacyPolicyActivity::class.java)) }) {
             Text("Privacy Policy")
@@ -121,6 +119,8 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
         }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.padding(top = 8.dp)) {
             Text("Reset to Default")
         }
+
+        Spacer(modifier = Modifier.weight(1f))
 
         Button(onClick = {
             sharedPreferences.edit {
@@ -151,11 +151,11 @@ private fun SettingsDropdown(label: String, selectedOption: String, options: Lis
         Text(text = label, modifier = Modifier.weight(1f))
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
             TextField(
+                modifier = Modifier.menuAnchor(),
                 value = selectedOption,
                 onValueChange = {},
                 readOnly = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable)
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
             )
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 options.forEach { option ->

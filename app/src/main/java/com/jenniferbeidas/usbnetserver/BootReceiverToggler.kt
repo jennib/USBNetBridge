@@ -5,20 +5,20 @@ import android.content.Context
 import android.content.pm.PackageManager
 
 /**
- * A singleton object responsible for enabling or disabling the [BootCompletedReceiver]
+ * A singleton object responsible for enabling or disabling the [BootReceiver]
  * based on user preference. This allows the app to control whether it starts on boot.
  */
 object BootReceiverToggler {
 
     /**
-     * Updates the enabled state of the [BootCompletedReceiver].
+     * Updates the enabled state of the [BootReceiver].
      *
      * @param context The application context, used to access the PackageManager.
      * @param isEnabled True to enable the receiver, false to disable it.
      */
     fun updateComponentState(context: Context, isEnabled: Boolean) {
         // A component name is a reference to a specific class in your app's manifest.
-        val receiver = ComponentName(context, BootCompletedReceiver::class.java)
+        val receiver = ComponentName(context, BootReceiver::class.java)
         val packageManager = context.packageManager
 
         // Determine the new state based on the 'isEnabled' flag.

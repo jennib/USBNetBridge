@@ -27,14 +27,18 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -68,8 +72,10 @@ class MainActivity : ComponentActivity() {
     private val cameraStatusText = mutableStateOf("")
 
     private var serialDevice: UsbSerialDevice? = null
-    private var serialServerSocket: ServerSocket? = null
-    private val serialServerPort = 8888
+    private var serialServerSocket8888: ServerSocket? = null
+    private var serialServerSocket23: ServerSocket? = null
+    private val serialServerPort8888 = 8888
+    private val serialServerPort23 = 23
 
     private var cameraServerSocket: ServerSocket? = null
     private val cameraServerPort = 8889
@@ -104,11 +110,21 @@ class MainActivity : ComponentActivity() {
                 statusMessage = statusText.value,
                 networkStatus = networkStatusText.value,
                 cameraStatus = cameraStatusText.value,
-                hasPermission = hasCameraPermission.value
+                hasPermission = hasCameraPermission.value,
+                onSoftReset = { sendSoftReset() },
+                onUnlock = { sendUnlock() }
             )
         }
 
         updateCameraPermission()
+    }
+
+    private fun sendSoftReset() {
+        serialDevice?.write(byteArrayOf(0x18))
+    }
+
+    private fun sendUnlock() {
+        serialDevice?.write("\$X\\n".toByteArray())
     }
 
     private fun updateCameraPermission() {
@@ -142,7 +158,8 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(usbPermissionReceiver)
-        serialServerSocket?.close()
+        serialServerSocket8888?.close()
+        serialServerSocket23?.close()
         cameraServerSocket?.close()
         serialDevice?.close()
     }
@@ -203,39 +220,41 @@ class MainActivity : ComponentActivity() {
             serialDevice?.setParity(parity)
 
             statusText.value = "Connected to ${device.deviceName}"
-            startSerialNetworkServer(serialDevice!!)
+            startSerialNetworkServers(serialDevice!!)
             startCameraStreamServer()
         } else {
             statusText.value = "Error setting up serial port."
         }
     }
 
-    private fun startSerialNetworkServer(serialPort: UsbSerialDevice) {
+    private fun startSerialNetworkServers(serialPort: UsbSerialDevice) {
+        val ipAddress = getLocalIpAddress() ?: return
+        networkStatusText.value = "Serial: $ipAddress:"
+        startServerOnPort(serialPort, serialServerPort8888) { port ->
+            networkStatusText.value += "$port "
+        }
+        startServerOnPort(serialPort, serialServerPort23) { port ->
+            networkStatusText.value += "$port "
+        }
+    }
+
+    private fun startServerOnPort(serialPort: UsbSerialDevice, port: Int, onStarted: (Int) -> Unit) {
         thread {
             try {
-                Thread.sleep(2000) // Wait for network to be ready on boot
-                val ipAddress = getLocalIpAddress()
-                if (ipAddress == null) {
-                    runOnUiThread {
-                        networkStatusText.value = "Could not get IP address. Make sure you are connected to a Wi-Fi network."
-                    }
-                    return@thread
-                }
+                val serverSocket = ServerSocket(port)
+                if (port == serialServerPort8888) serialServerSocket8888 = serverSocket else serialServerSocket23 = serverSocket
 
-                serialServerSocket = ServerSocket(serialServerPort)
                 runOnUiThread {
-                    networkStatusText.value = "Serial: $ipAddress:$serialServerPort"
+                    onStarted(port)
                 }
 
                 while (!Thread.currentThread().isInterrupted) {
-                    val clientSocket = serialServerSocket!!.accept()
-                    Log.d(tag, "Client connected to serial: ${clientSocket.inetAddress}")
+                    val clientSocket = serverSocket.accept()
+                    Log.d(tag, "Client connected to serial on port $port: ${clientSocket.inetAddress}")
                     bridgeStreams(clientSocket, serialPort)
                 }
             } catch (e: IOException) {
-                if (serialServerSocket?.isClosed == false) {
-                    Log.e(tag, "Serial server error", e)
-                }
+                Log.e(tag, "Serial server error on port $port", e)
             }
         }
     }
@@ -264,13 +283,13 @@ class MainActivity : ComponentActivity() {
 
                     val outputStream = clientSocket.getOutputStream()
                     outputStream.write(
-                        ("HTTP/1.0 200 OK\r\n" +
-                                "Connection: close\r\n" +
-                                "Max-Age: 0\r\n" +
-                                "Expires: 0\r\n" +
-                                "Cache-Control: no-cache, private\r\n" +
-                                "Pragma: no-cache\r\n" +
-                                "Content-Type: multipart/x-mixed-replace; boundary=--boundary\r\n\r\n").toByteArray()
+                        ("HTTP/1.0 200 OK\\r\\n" +
+                                "Connection: close\\r\\n" +
+                                "Max-Age: 0\\r\\n" +
+                                "Expires: 0\\r\\n" +
+                                "Cache-Control: no-cache, private\\r\\n" +
+                                "Pragma: no-cache\\r\\n" +
+                                "Content-Type: multipart/x-mixed-replace; boundary=--boundary\\r\\n\\r\\n").toByteArray()
                     )
 
                     analysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
@@ -278,12 +297,12 @@ class MainActivity : ComponentActivity() {
                         if (jpegBytes != null) {
                             try {
                                 outputStream.write(
-                                    ("--boundary\r\n" +
-                                            "Content-Type: image/jpeg\r\n" +
-                                            "Content-Length: ${jpegBytes.size}\r\n\r\n").toByteArray()
+                                    ("--boundary\\r\\n" +
+                                            "Content-Type: image/jpeg\\r\\n" +
+                                            "Content-Length: ${jpegBytes.size}\\r\\n\\r\\n").toByteArray()
                                 )
                                 outputStream.write(jpegBytes)
-                                outputStream.write("\r\n".toByteArray())
+                                outputStream.write("\\r\\n".toByteArray())
                                 outputStream.flush()
                             } catch (e: IOException) {
                                 Log.d(tag, "Client disconnected from camera stream")
@@ -396,7 +415,9 @@ class MainActivity : ComponentActivity() {
         statusMessage: String,
         networkStatus: String,
         cameraStatus: String,
-        hasPermission: Boolean
+        hasPermission: Boolean,
+        onSoftReset: () -> Unit,
+        onUnlock: () -> Unit
     ) {
         val context = LocalContext.current
         Box(modifier = Modifier.fillMaxSize()) {
@@ -428,6 +449,10 @@ class MainActivity : ComponentActivity() {
                 }
                 if (cameraStatus.isNotBlank()) {
                     Text(text = cameraStatus, color = Color.White)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Button(onClick = onSoftReset) { Text("Soft Reset") }
+                    Button(onClick = onUnlock) { Text("Unlock") }
                 }
             }
         }
