@@ -42,6 +42,9 @@
         <activity
             android:name=".SettingsActivity"
             android:label="Settings" />
+        <activity
+            android:name=".PrivacyPolicyActivity"
+            android:label="Privacy Policy" />
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

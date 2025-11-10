@@ -10,16 +10,22 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,21 +33,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.felhr.usbserial.UsbSerialInterface
 
 class SettingsActivity : ComponentActivity() {
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            SettingsScreen(onSave = { finish() })
+            Scaffold(
+                topBar = { TopAppBar(title = { Text("Settings") }) }
+            ) {
+                SettingsScreen(modifier = Modifier.padding(it), onSave = { finish() })
+            }
         }
     }
 }
 
 @Composable
-private fun SettingsScreen(onSave: () -> Unit) {
+private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
     val context = LocalContext.current
     val sharedPreferences = remember { context.getSharedPreferences("serial_settings", Context.MODE_PRIVATE) }
 
@@ -57,14 +69,16 @@ private fun SettingsScreen(onSave: () -> Unit) {
     var startOnBoot by remember { mutableStateOf(sharedPreferences.getBoolean("start_on_boot", false)) }
     var keepScreenOn by remember { mutableStateOf(sharedPreferences.getBoolean("keep_screen_on", false)) }
 
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text("Serial Port Settings", modifier = Modifier.padding(bottom = 16.dp))
-
+    Column(modifier = modifier.padding(16.dp)) {
+        Text("Serial Port Settings", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
         SettingsDropdown(label = "Baud Rate", selectedOption = baudRate, options = baudRateOptions) { baudRate = it }
         SettingsDropdown(label = "Data Bits", selectedOption = dataBits, options = dataBitsOptions) { dataBits = it }
         SettingsDropdown(label = "Stop Bits", selectedOption = stopBits, options = stopBitsOptions.keys.toList()) { stopBits = it }
         SettingsDropdown(label = "Parity", selectedOption = parity, options = parityOptions.keys.toList()) { parity = it }
 
+        Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+        Text("App Settings", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -73,7 +87,6 @@ private fun SettingsScreen(onSave: () -> Unit) {
             Text(text = "Start on Boot")
             Switch(checked = startOnBoot, onCheckedChange = { startOnBoot = it })
         }
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -83,17 +96,27 @@ private fun SettingsScreen(onSave: () -> Unit) {
             Switch(checked = keepScreenOn, onCheckedChange = { keepScreenOn = it })
         }
 
-        Text(
-            text = "For 'Start on Boot' to work, you may need to manually grant permission in your phone's settings. Use the button below to open the relevant settings page.",
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
+        Spacer(modifier = Modifier.height(8.dp))
 
         Button(onClick = {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             intent.data = Uri.parse("package:" + context.packageName)
             context.startActivity(intent)
-        }) {
-            Text("Open App Settings")
+        }, colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)) {
+            Text("Open App System Settings")
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Button(onClick = { context.startActivity(Intent(context, PrivacyPolicyActivity::class.java)) }) {
+            Text("Privacy Policy")
+        }
+
+        Button(onClick = {
+            sharedPreferences.edit().clear().apply()
+            onSave()
+        }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.padding(top = 8.dp)) {
+            Text("Reset to Default")
         }
 
         Button(onClick = {
@@ -108,7 +131,7 @@ private fun SettingsScreen(onSave: () -> Unit) {
             }
             onSave()
         }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Text("Save")
+            Text("Save and Close")
         }
     }
 }
@@ -123,7 +146,7 @@ private fun SettingsDropdown(label: String, selectedOption: String, options: Lis
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
     ) {
-        Text(text = label)
+        Text(text = label, modifier = Modifier.weight(1f))
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
             TextField(
                 value = selectedOption,
