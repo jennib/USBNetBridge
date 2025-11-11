@@ -1,3 +1,4 @@
+// version 1.0.0
 package com.jenniferbeidas.usbnetserver
 
 import android.Manifest
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -51,6 +53,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.ServerSocket
+import java.net.URLDecoder
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
@@ -63,6 +66,7 @@ class MainActivity : ComponentActivity() {
     private var serialServerSocket8888: ServerSocket? = null
     private var serialServerSocket23: ServerSocket? = null
     private var cameraServerSocket: ServerSocket? = null
+    private var httpControlSocket: ServerSocket? = null
 
     @Volatile
     private var latestJpeg: ByteArray? = null
@@ -70,11 +74,13 @@ class MainActivity : ComponentActivity() {
     private val serialServerPort8888 = 8888
     private val serialServerPort23 = 23
     private val cameraServerPort = 8889
+    private val httpControlPort = 8080
 
-    private val statusText = mutableStateOf("Initializing...")
-    private val networkStatusText = mutableStateOf("")
-    private val cameraStatusText = mutableStateOf("")
-    private val hasCameraPermission = mutableStateOf(false)
+    private var statusText by mutableStateOf("Initializing...")
+    private var networkStatusText by mutableStateOf("")
+    private var cameraStatusText by mutableStateOf("")
+    private var httpStatusText by mutableStateOf("")
+    private var hasCameraPermission by mutableStateOf(false)
 
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
@@ -84,30 +90,31 @@ class MainActivity : ComponentActivity() {
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
 
         val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            hasCameraPermission.value = isGranted
+            hasCameraPermission = isGranted
             if (!isGranted) {
-                statusText.value = "Camera permission is required to stream video."
+                statusText = "Camera permission is required to stream video."
             }
         }
 
         setContent {
             MainContent(
-                statusMessage = statusText.value,
-                networkStatus = networkStatusText.value,
-                cameraStatus = cameraStatusText.value,
-                hasPermission = hasCameraPermission.value
+                statusMessage = statusText,
+                networkStatus = networkStatusText,
+                cameraStatus = cameraStatusText,
+                httpStatus = httpStatusText,
+                hasPermission = hasCameraPermission
             )
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            hasCameraPermission.value = true
+            hasCameraPermission = true
         } else {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
 
         val permissionFilter = IntentFilter(actionUsbPermission)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbPermissionReceiver, permissionFilter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(usbPermissionReceiver, permissionFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(usbPermissionReceiver, permissionFilter)
         }
@@ -115,7 +122,19 @@ class MainActivity : ComponentActivity() {
         val deviceFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         registerReceiver(usbDeviceReceiver, deviceFilter)
 
-        checkForConnectedDevice()
+        statusText = "Please connect a USB serial device."
+
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        val device: UsbDevice? = intent?.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        device?.let { findAndConnectDevice(it) }
     }
 
     override fun onDestroy() {
@@ -126,17 +145,12 @@ class MainActivity : ComponentActivity() {
         serialServerSocket8888?.close()
         serialServerSocket23?.close()
         cameraServerSocket?.close()
-    }
-
-    private fun checkForConnectedDevice() {
-        usbManager.deviceList.values.firstOrNull()?.let {
-            findAndConnectDevice(it)
-        }
+        httpControlSocket?.close()
     }
 
     private val usbDeviceReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
             device?.let { findAndConnectDevice(it) }
         }
     }
@@ -144,11 +158,11 @@ class MainActivity : ComponentActivity() {
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == actionUsbPermission) {
-                val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                 if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && device != null) {
                     setupSerialConnection(device)
                 } else {
-                    statusText.value = "USB permission denied."
+                    statusText = "USB permission denied."
                 }
             }
         }
@@ -156,18 +170,23 @@ class MainActivity : ComponentActivity() {
 
     private fun findAndConnectDevice(device: UsbDevice) {
         if (!usbManager.hasPermission(device)) {
-            val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), PendingIntent.FLAG_IMMUTABLE)
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), flags)
             usbManager.requestPermission(device, permissionIntent)
-            return
+        } else {
+            setupSerialConnection(device)
         }
-        setupSerialConnection(device)
     }
 
     private fun setupSerialConnection(device: UsbDevice) {
         serialDevice?.close()
         val connection = usbManager.openDevice(device)
         if (connection == null) {
-            statusText.value = "Failed to open USB device."
+            statusText = "Failed to open USB device."
             return
         }
 
@@ -178,10 +197,11 @@ class MainActivity : ComponentActivity() {
             serialDevice?.setDataBits(prefs.getInt("data_bits", 8))
             serialDevice?.setStopBits(prefs.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1))
             serialDevice?.setParity(prefs.getInt("parity", UsbSerialInterface.PARITY_NONE))
-            statusText.value = "Connected to ${device.deviceName}"
+            statusText = "Connected to ${device.deviceName}"
             startSerialNetworkServers(serialDevice!!)
+            startHttpControlServer(serialDevice!!)
         } else {
-            statusText.value = "Failed to open serial port."
+            statusText = "Failed to open serial port."
         }
     }
 
@@ -191,12 +211,12 @@ class MainActivity : ComponentActivity() {
             try {
                 val ipAddress = getLocalIpAddress()
                 if (ipAddress == null) {
-                    runOnUiThread { cameraStatusText.value = "Camera: Could not get IP address." }
+                    runOnUiThread { cameraStatusText = "Camera: Could not get IP address." }
                     return@thread
                 }
 
                 cameraServerSocket = ServerSocket(cameraServerPort)
-                runOnUiThread { cameraStatusText.value = "Camera: $ipAddress:$cameraServerPort" }
+                runOnUiThread { cameraStatusText = "Camera: $ipAddress:$cameraServerPort" }
 
                 while (!Thread.currentThread().isInterrupted) {
                     val clientSocket = cameraServerSocket!!.accept()
@@ -249,9 +269,9 @@ class MainActivity : ComponentActivity() {
 
     private fun startSerialNetworkServers(serialPort: UsbSerialDevice) {
         val ipAddress = getLocalIpAddress() ?: return
-        networkStatusText.value = "Serial: $ipAddress:"
-        startServerOnPort(serialPort, serialServerPort8888) { port -> runOnUiThread { networkStatusText.value += "$port " } }
-        startServerOnPort(serialPort, serialServerPort23) { port -> runOnUiThread { networkStatusText.value += "$port " } }
+        networkStatusText = "Serial: $ipAddress:"
+        startServerOnPort(serialPort, serialServerPort8888) { port -> runOnUiThread { networkStatusText += "$port " } }
+        startServerOnPort(serialPort, serialServerPort23) { port -> runOnUiThread { networkStatusText += "$port " } }
     }
 
     private fun startServerOnPort(serialPort: UsbSerialDevice, port: Int, onStarted: (Int) -> Unit) {
@@ -267,6 +287,53 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: IOException) {
                 Log.e(tag, "Serial server error on port $port", e)
+            }
+        }
+    }
+
+    private fun startHttpControlServer(serialPort: UsbSerialDevice) {
+        thread {
+            try {
+                val ipAddress = getLocalIpAddress()
+                httpControlSocket = ServerSocket(httpControlPort)
+                runOnUiThread {
+                    httpStatusText = "HTTP Control: $ipAddress:$httpControlPort"
+                }
+                while (!Thread.currentThread().isInterrupted) {
+                    val client = httpControlSocket!!.accept()
+                    thread {
+                        try {
+                            val reader = client.getInputStream().bufferedReader()
+                            val requestLine = reader.readLine()
+                            Log.d(tag, "HTTP Request: $requestLine")
+
+                            val response: String
+                            if (requestLine != null && requestLine.startsWith("GET")) {
+                                val command = requestLine.substringAfter("?cmd=", "").substringBefore(" ")
+                                if (command.isNotBlank()) {
+                                    val decodedCommand = URLDecoder.decode(command, "UTF-8")
+                                    serialPort.write(decodedCommand.toByteArray())
+                                    serialPort.write("\n".toByteArray())
+                                    response = "HTTP/1.1 200 OK\r\n\r\nCommand Sent: $decodedCommand"
+                                } else {
+                                    response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" +
+                                            "<html><body><h1>Serial Control</h1>" +
+                                            "<form action=/ method=get><input type=text name=cmd><input type=submit value=Send></form>" +
+                                            "</body></html>"
+                                }
+                            } else {
+                                response = "HTTP/1.1 400 Bad Request\r\n\r\nOnly GET requests are supported."
+                            }
+                            client.getOutputStream().write(response.toByteArray())
+                        } catch (e: Exception) {
+                            Log.e(tag, "Error handling HTTP control client", e)
+                        } finally {
+                            client.close()
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                Log.e(tag, "HTTP control server error", e)
             }
         }
     }
@@ -314,31 +381,12 @@ class MainActivity : ComponentActivity() {
     private fun getLocalIpAddress(): String? {
         try {
             val connectivityManager = applicationContext.getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val network = connectivityManager.activeNetwork ?: return null
-                val linkProperties = connectivityManager.getLinkProperties(network) ?: return null
-                for (linkAddress in linkProperties.linkAddresses) {
-                    val address = linkAddress.address
-                    if (address is Inet4Address && !address.isLoopbackAddress) {
-                        return address.hostAddress
-                    }
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                val networkInfo = connectivityManager.activeNetworkInfo ?: return null
-                @Suppress("DEPRECATION")
-                if (networkInfo.isConnected) {
-                    val addresses = java.net.NetworkInterface.getNetworkInterfaces()
-                    while (addresses.hasMoreElements()) {
-                        val anet = addresses.nextElement()
-                        val iNet = anet.inetAddresses
-                        while (iNet.hasMoreElements()) {
-                            val address = iNet.nextElement()
-                            if (!address.isLoopbackAddress && address is Inet4Address) {
-                                return address.hostAddress
-                            }
-                        }
-                    }
+            val network = connectivityManager.activeNetwork ?: return null
+            val linkProperties = connectivityManager.getLinkProperties(network) ?: return null
+            for (linkAddress in linkProperties.linkAddresses) {
+                val address = linkAddress.address
+                if (address is Inet4Address && !address.isLoopbackAddress) {
+                    return address.hostAddress
                 }
             }
         } catch (e: Exception) {
@@ -352,6 +400,7 @@ class MainActivity : ComponentActivity() {
         statusMessage: String,
         networkStatus: String,
         cameraStatus: String,
+        httpStatus: String,
         hasPermission: Boolean
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -365,6 +414,7 @@ class MainActivity : ComponentActivity() {
                 Text(text = statusMessage, color = Color.White)
                 if (networkStatus.isNotBlank()) Text(text = networkStatus, color = Color.White)
                 if (cameraStatus.isNotBlank()) Text(text = cameraStatus, color = Color.White)
+                if (httpStatus.isNotBlank()) Text(text = httpStatus, color = Color.White)
             }
         }
     }
