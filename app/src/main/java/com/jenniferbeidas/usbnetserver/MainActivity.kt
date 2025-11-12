@@ -71,8 +71,8 @@ class MainActivity : ComponentActivity() {
     @Volatile
     private var latestJpeg: ByteArray? = null
 
-    private val serialServerPort8888 = 8888
-    private val serialServerPort23 = 23
+    private val serialServerPort = 8888
+
     private val cameraServerPort = 8889
     private val httpControlPort = 8080
 
@@ -119,9 +119,6 @@ class MainActivity : ComponentActivity() {
             registerReceiver(usbPermissionReceiver, permissionFilter)
         }
 
-        val deviceFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-        registerReceiver(usbDeviceReceiver, deviceFilter)
-
         statusText = "Please connect a USB serial device."
 
         handleIntent(intent)
@@ -133,14 +130,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        val device: UsbDevice? = intent?.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-        device?.let { findAndConnectDevice(it) }
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+            device?.let { findAndConnectDevice(it) }
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(usbPermissionReceiver)
-        unregisterReceiver(usbDeviceReceiver)
         serialDevice?.close()
         serialServerSocket8888?.close()
         serialServerSocket23?.close()
@@ -148,17 +151,15 @@ class MainActivity : ComponentActivity() {
         httpControlSocket?.close()
     }
 
-    private val usbDeviceReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-            device?.let { findAndConnectDevice(it) }
-        }
-    }
-
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == actionUsbPermission) {
-                val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                }
                 if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && device != null) {
                     setupSerialConnection(device)
                 } else {
@@ -170,12 +171,7 @@ class MainActivity : ComponentActivity() {
 
     private fun findAndConnectDevice(device: UsbDevice) {
         if (!usbManager.hasPermission(device)) {
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            } else {
-                PendingIntent.FLAG_UPDATE_CURRENT
-            }
-            val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), flags)
+            val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), PendingIntent.FLAG_IMMUTABLE)
             usbManager.requestPermission(device, permissionIntent)
         } else {
             setupSerialConnection(device)
@@ -270,15 +266,14 @@ class MainActivity : ComponentActivity() {
     private fun startSerialNetworkServers(serialPort: UsbSerialDevice) {
         val ipAddress = getLocalIpAddress() ?: return
         networkStatusText = "Serial: $ipAddress:"
-        startServerOnPort(serialPort, serialServerPort8888) { port -> runOnUiThread { networkStatusText += "$port " } }
-        startServerOnPort(serialPort, serialServerPort23) { port -> runOnUiThread { networkStatusText += "$port " } }
+        startServerOnPort(serialPort, serialServerPort) { port -> runOnUiThread { networkStatusText += "$port " } }
     }
 
     private fun startServerOnPort(serialPort: UsbSerialDevice, port: Int, onStarted: (Int) -> Unit) {
         thread {
             try {
                 val serverSocket = ServerSocket(port)
-                if (port == serialServerPort8888) serialServerSocket8888 = serverSocket else serialServerSocket23 = serverSocket
+                if (port == serialServerPort) serialServerSocket8888 = serverSocket else serialServerSocket23 = serverSocket
                 onStarted(port)
                 while (!Thread.currentThread().isInterrupted) {
                     val clientSocket = serverSocket.accept()
