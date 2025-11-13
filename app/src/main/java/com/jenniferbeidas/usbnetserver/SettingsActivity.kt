@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -58,7 +60,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
     val context = LocalContext.current
     val sharedPreferences = remember { context.getSharedPreferences("serial_settings", Context.MODE_PRIVATE) }
 
-    val baudRateOptions = listOf("9600", "19200", "38400", "57600", "115200")
+    val baudRateOptions = listOf("300", "600", "1200", "2400", "4800", "9600", "19200", "38400", "57600", "74880", "115200", "230400", "250000", "500000", "1000000")
     val dataBitsOptions = listOf("7", "8")
     val stopBitsOptions = mapOf("1" to UsbSerialInterface.STOP_BITS_1, "2" to UsbSerialInterface.STOP_BITS_2)
     val parityOptions = mapOf("None" to UsbSerialInterface.PARITY_NONE, "Even" to UsbSerialInterface.PARITY_EVEN, "Odd" to UsbSerialInterface.PARITY_ODD, "Mark" to UsbSerialInterface.PARITY_MARK, "Space" to UsbSerialInterface.PARITY_SPACE)
@@ -70,7 +72,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
     var startOnBoot by remember { mutableStateOf(sharedPreferences.getBoolean("start_on_boot", false)) }
     var keepScreenOn by remember { mutableStateOf(sharedPreferences.getBoolean("keep_screen_on", false)) }
 
-    Column(modifier = modifier.padding(16.dp)) {
+    Column(modifier = modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("Serial Port Settings", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
         SettingsDropdown(label = "Baud Rate", selectedOption = baudRate, options = baudRateOptions) { baudRate = it }
         SettingsDropdown(label = "Data Bits", selectedOption = dataBits, options = dataBitsOptions) { dataBits = it }
@@ -120,7 +122,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
             Text("Reset to Default")
         }
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp)) // Add some space before the final button
 
         Button(onClick = {
             sharedPreferences.edit {
@@ -133,7 +135,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
             }
             onSave()
         }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Text("Save and Close")
+            Text("Save")
         }
     }
 }

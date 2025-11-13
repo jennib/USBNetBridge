@@ -1,0 +1,136 @@
+'''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Serial Test</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #f0f0f0; }
+        .container { background-color: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 90%; max-width: 600px; margin-top: 2rem; }
+        input, button { font-size: 1rem; padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc; }
+        button { cursor: pointer; background-color: #007bff; color: white; border-color: #007bff; }
+        button:disabled { background-color: #aaa; border-color: #aaa; cursor: not-allowed; }
+        #log { width: 100%; height: 300px; background-color: #222; color: #0f0; font-family: monospace; overflow-y: scroll; border-radius: 4px; margin-top: 1rem; white-space: pre-wrap; }
+        .group { margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; }
+        .group label { font-weight: bold; }
+        #command { flex-grow: 1; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>WebSocket Serial Test</h2>
+        <div class="group">
+            <label for="ip">Server IP:</label>
+            <input type="text" id="ip" placeholder="10.0.0.162">
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+        <div class="group">
+            <input type="text" id="command" placeholder="? or $$" disabled>
+            <button id="sendBtn" disabled>Send</button>
+            <button id="ctrlXBtn" disabled>Send CTRL-X</button>
+        </div>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const ipInput = document.getElementById('ip');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const commandInput = document.getElementById('command');
+        const sendBtn = document.getElementById('sendBtn');
+        const ctrlXBtn = document.getElementById('ctrlXBtn');
+        const logDiv = document.getElementById('log');
+
+        let socket = null;
+
+        function log(message) {
+            logDiv.innerHTML += message + '\n';
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        connectBtn.addEventListener('click', () => {
+            const ip = ipInput.value.trim();
+            if (!ip) {
+                alert('Please enter the server IP address.');
+                return;
+            }
+            const url = `wss://${ip}:8887`;
+            log(`Attempting to connect to ${url}...`);
+
+            socket = new WebSocket(url);
+
+            socket.onopen = () => {
+                log('\n--- WebSocket Connected ---\n');
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                commandInput.disabled = false;
+                sendBtn.disabled = false;
+                ctrlXBtn.disabled = false;
+            };
+
+            socket.onmessage = async (event) => {
+                let messageText;
+                if (event.data instanceof Blob) {
+                    messageText = await event.data.text();
+                } else if (event.data instanceof ArrayBuffer) {
+                    const decoder = new TextDecoder('utf-8');
+                    messageText = decoder.decode(event.data);
+                } else {
+                    messageText = event.data;
+                }
+                log(`IN: ${messageText.trim()}`);
+            };
+
+            socket.onerror = (error) => {
+                log('\n--- WebSocket Error ---\nSee browser console (F12) for details.');
+                console.error('WebSocket Error:', error);
+            };
+
+            socket.onclose = () => {
+                log('\n--- WebSocket Disconnected ---\n');
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                commandInput.disabled = true;
+                sendBtn.disabled = true;
+                ctrlXBtn.disabled = true;
+                socket = null;
+            };
+        });
+
+        disconnectBtn.addEventListener('click', () => {
+            if (socket) {
+                socket.close();
+            }
+        });
+
+        function sendCommand() {
+            if (socket && commandInput.value) {
+                const command = commandInput.value;
+                log(`OUT: ${command}`);
+                socket.send(command + '\n'); // Append newline to commands
+                commandInput.value = '';
+            }
+        }
+
+        sendBtn.addEventListener('click', sendCommand);
+
+        commandInput.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') {
+                sendCommand();
+            }
+        });
+
+        ctrlXBtn.addEventListener('click', () => {
+            if (socket) {
+                log('OUT: CTRL-X (0x18)');
+                const ctrlX = new Uint8Array([0x18]);
+                socket.send(ctrlX);
+            }
+        });
+
+    </script>
+</body>
+</html>
+'''
