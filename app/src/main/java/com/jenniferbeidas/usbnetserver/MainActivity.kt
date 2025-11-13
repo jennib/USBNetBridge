@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
@@ -20,9 +23,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,6 +81,7 @@ import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import java.util.Date
+import java.util.concurrent.Executors
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import kotlin.concurrent.thread
@@ -93,11 +98,16 @@ class MainActivity : ComponentActivity() {
     private var serialDevice: UsbSerialDevice? = null
     private var unifiedServer: ServerSocket? = null
     private var tcpProxyServer: ServerSocket? = null
+    private var cameraServerSocket: ServerSocket? = null
     private val webSocketClients = mutableListOf<Socket>()
     private val tcpProxyClients = mutableListOf<Socket>()
 
+    @Volatile
+    private var latestJpeg: ByteArray? = null
+
     private val unifiedPort = 8887
     private val tcpProxyPort = 9999
+    private val cameraServerPort = 8889
 
     private var uiState by mutableStateOf(UiState())
 
@@ -208,8 +218,25 @@ class MainActivity : ComponentActivity() {
 
     private fun checkForExistingDevice() {
         val deviceList = usbManager.deviceList
-        deviceList.values.firstOrNull()?.let {
-            findAndConnectDevice(it)
+        for (device in deviceList.values) {
+            val connection = usbManager.openDevice(device)
+            if (connection != null) {
+                // Probe to see if this device is supported by the UsbSerial library.
+                var tempSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
+                if (tempSerialDevice == null) {
+                    // If probing fails, try the default creation method.
+                    tempSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
+                }
+                connection.close() // Immediately close the temporary connection.
+
+                if (tempSerialDevice != null) {
+                    // This device is a potential serial device.
+                    // Proceed with the full connection logic which handles permissions.
+                    findAndConnectDevice(device)
+                    // Stop searching and connecting to other devices.
+                    return
+                }
+            }
         }
     }
 
@@ -235,7 +262,22 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        serialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
+        // First, try to find the serial interface automatically. This may fail for some devices.
+        var newSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
+
+        // If probing fails, fall back to the default interface which is often correct.
+        if (newSerialDevice == null) {
+            updateState { it.copy(statusMessage = "Probing for serial interface failed, falling back to default.") }
+            newSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
+        }
+        
+        serialDevice = newSerialDevice
+
+        if (serialDevice == null) {
+            updateState { it.copy(statusMessage = "Device not supported. Please use a standard serial device.") }
+            return
+        }
+
         if (serialDevice?.open() == true) {
             val prefs = getSharedPreferences("serial_settings", MODE_PRIVATE)
             serialDevice?.setBaudRate(prefs.getInt("baud_rate", 115200))
@@ -278,7 +320,70 @@ class MainActivity : ComponentActivity() {
             startUnifiedServer(serialDevice!!)
             startTcpProxyServer(serialDevice!!)
         } else {
-            updateState { it.copy(statusMessage = "Failed to open serial port.") }
+            updateState { it.copy(statusMessage = "Failed to open serial port. Is the device supported?") }
+            serialDevice = null
+        }
+    }
+
+    private fun startCameraStreamServer() {
+        if (cameraServerSocket != null && !cameraServerSocket!!.isClosed) return
+        thread {
+            try {
+                val ipAddress = getLocalIpAddress()
+                if (ipAddress == null) {
+                    updateState { it.copy(cameraStatus = "Camera: Could not get IP address.") }
+                    return@thread
+                }
+
+                cameraServerSocket = ServerSocket(cameraServerPort)
+                updateState { it.copy(cameraStatus = "Camera: $ipAddress:$cameraServerPort") }
+
+                while (!Thread.currentThread().isInterrupted) {
+                    val clientSocket = cameraServerSocket!!.accept()
+                    Log.d(tag, "Client connected to camera: ${clientSocket.inetAddress}")
+                    thread {
+                        try {
+                            val outputStream = clientSocket.getOutputStream()
+                            outputStream.write(
+                                ("HTTP/1.0 200 OK\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Max-Age: 0\r\n" +
+                                        "Expires: 0\r\n" +
+                                        "Cache-Control: no-cache, private\r\n" +
+                                        "Pragma: no-cache\r\n" +
+                                        "Content-Type: multipart/x-mixed-replace; boundary=boundary\r\n\r\n").toByteArray()
+                            )
+
+                            while (clientSocket.isConnected) {
+                                val jpegBytes = latestJpeg
+                                if (jpegBytes != null) {
+                                    outputStream.write(
+                                        ("--boundary\r\n" +
+                                                "Content-Type: image/jpeg\r\n" +
+                                                "Content-Length: ${jpegBytes.size}\r\n\r\n").toByteArray()
+                                    )
+                                    outputStream.write(jpegBytes)
+                                    outputStream.write("\r\n".toByteArray())
+                                    outputStream.flush()
+                                }
+                                Thread.sleep(100) // Frame rate limiter
+                            }
+                        } catch (e: IOException) {
+                            Log.d(tag, "Client disconnected from camera stream: ${e.message}")
+                        } finally {
+                            try {
+                                clientSocket.close()
+                            } catch (e: IOException) {
+                                Log.e(tag, "Error closing client socket", e)
+                            }
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                if (cameraServerSocket?.isClosed == false) {
+                    Log.e(tag, "Camera server error", e)
+                }
+            }
         }
     }
 
@@ -591,6 +696,7 @@ class MainActivity : ComponentActivity() {
         serialDevice?.close()
         unifiedServer?.close()
         tcpProxyServer?.close()
+        cameraServerSocket?.close()
         synchronized(webSocketClients) { webSocketClients.forEach { try { it.close() } catch (e: IOException) {} } }
         webSocketClients.clear()
         synchronized(tcpProxyClients) { tcpProxyClients.forEach { try { it.close() } catch (e: IOException) {} } }
@@ -612,6 +718,23 @@ class MainActivity : ComponentActivity() {
             Log.e(tag, "Failed to get IP address", e)
         }
         return null
+    }
+
+    private fun ImageProxy.toJpeg(): ByteArray? {
+        if (format != ImageFormat.YUV_420_888) return null
+        val yBuffer = planes[0].buffer
+        val uBuffer = planes[1].buffer
+        val vBuffer = planes[2].buffer
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+        val nv21 = ByteArray(ySize + uSize + vSize)
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+        val out = ByteArrayOutputStream()
+        YuvImage(nv21, ImageFormat.NV21, this.width, this.height, null).compressToJpeg(Rect(0, 0, width, height), 80, out)
+        return out.toByteArray()
     }
 
     private fun ByteArray.toHexString(): String = joinToString(separator = " ") { "%02X".format(it) }
@@ -642,6 +765,7 @@ class MainActivity : ComponentActivity() {
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 if (uiState.networkStatus.isNotBlank()) Text(text = uiState.networkStatus, color = Color.White)
+                if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = Color.White)
                 if (uiState.httpStatus.isNotBlank()) Text(text = uiState.httpStatus, color = Color.White)
                 if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = Color.White)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -671,9 +795,20 @@ class MainActivity : ComponentActivity() {
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
                     val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+                    
+                    val imageAnalysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+
+                    imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                        latestJpeg = imageProxy.toJpeg()
+                        imageProxy.close()
+                    }
+                    
                     try {
                         cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+                        cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis)
+                        startCameraStreamServer()
                     } catch (e: Exception) {
                         Log.e(tag, "Use case binding failed", e)
                     }
