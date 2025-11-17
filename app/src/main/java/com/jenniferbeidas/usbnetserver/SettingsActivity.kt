@@ -64,11 +64,13 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
     val dataBitsOptions = listOf("7", "8")
     val stopBitsOptions = mapOf("1" to UsbSerialInterface.STOP_BITS_1, "2" to UsbSerialInterface.STOP_BITS_2)
     val parityOptions = mapOf("None" to UsbSerialInterface.PARITY_NONE, "Even" to UsbSerialInterface.PARITY_EVEN, "Odd" to UsbSerialInterface.PARITY_ODD, "Mark" to UsbSerialInterface.PARITY_MARK, "Space" to UsbSerialInterface.PARITY_SPACE)
+    val displayModeOptions = listOf("Hex", "Raw")
 
     var baudRate by remember { mutableStateOf(sharedPreferences.getInt("baud_rate", 115200).toString()) }
     var dataBits by remember { mutableStateOf(sharedPreferences.getInt("data_bits", 8).toString()) }
     var stopBits by remember { mutableStateOf(stopBitsOptions.entries.find { it.value == sharedPreferences.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1) }?.key ?: "1") }
     var parity by remember { mutableStateOf(parityOptions.entries.find { it.value == sharedPreferences.getInt("parity", UsbSerialInterface.PARITY_NONE) }?.key ?: "None") }
+    var displayMode by remember { mutableStateOf(sharedPreferences.getString("display_mode", "Hex") ?: "Hex") }
     var startOnBoot by remember { mutableStateOf(sharedPreferences.getBoolean("start_on_boot", false)) }
     var keepScreenOn by remember { mutableStateOf(sharedPreferences.getBoolean("keep_screen_on", false)) }
 
@@ -82,6 +84,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
         Text("App Settings", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+        SettingsDropdown(label = "Display Mode", selectedOption = displayMode, options = displayModeOptions) { displayMode = it }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -130,6 +133,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
                 putInt("data_bits", dataBits.toInt())
                 putInt("stop_bits", stopBitsOptions.getValue(stopBits))
                 putInt("parity", parityOptions.getValue(parity))
+                putString("display_mode", displayMode)
                 putBoolean("start_on_boot", startOnBoot)
                 putBoolean("keep_screen_on", keepScreenOn)
             }

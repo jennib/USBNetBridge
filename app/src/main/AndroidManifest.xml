@@ -40,6 +40,9 @@
         <activity
             android:name=".PrivacyPolicyActivity"
             android:label="Privacy Policy" />
+        <activity
+            android:name=".MacroEditorActivity"
+            android:label="Edit Macros" />
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

@@ -28,6 +28,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,17 +38,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -150,8 +156,28 @@ class MainActivity : ComponentActivity() {
 
         updateState { it.copy(statusMessage = "Please connect a USB serial device.") }
 
+        loadMacros()
+
         handleIntent(intent)
         checkForExistingDevice()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        loadMacros()
+    }
+
+    private fun loadMacros() {
+        val prefs = getSharedPreferences("macros", MODE_PRIVATE)
+        val macroStrings = prefs.getStringSet("macros", null)
+        if (macroStrings == null) {
+            // Create default macros if none are stored
+            val defaultMacros = setOf("Soft Reset|0x18", "Unlock|\$X\n")
+            prefs.edit().putStringSet("macros", defaultMacros).apply()
+            updateState { it.copy(macros = defaultMacros.map { s -> s.split("|").let { p -> Macro(p[0], p[1]) } }) }
+        } else {
+            updateState { it.copy(macros = macroStrings.map { s -> s.split("|").let { p -> Macro(p[0], p[1]) } }) }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -221,19 +247,14 @@ class MainActivity : ComponentActivity() {
         for (device in deviceList.values) {
             val connection = usbManager.openDevice(device)
             if (connection != null) {
-                // Probe to see if this device is supported by the UsbSerial library.
                 var tempSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
                 if (tempSerialDevice == null) {
-                    // If probing fails, try the default creation method.
                     tempSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
                 }
-                connection.close() // Immediately close the temporary connection.
+                connection.close()
 
                 if (tempSerialDevice != null) {
-                    // This device is a potential serial device.
-                    // Proceed with the full connection logic which handles permissions.
                     findAndConnectDevice(device)
-                    // Stop searching and connecting to other devices.
                     return
                 }
             }
@@ -262,10 +283,7 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        // First, try to find the serial interface automatically. This may fail for some devices.
         var newSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
-
-        // If probing fails, fall back to the default interface which is often correct.
         if (newSerialDevice == null) {
             updateState { it.copy(statusMessage = "Probing for serial interface failed, falling back to default.") }
             newSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
@@ -284,12 +302,17 @@ class MainActivity : ComponentActivity() {
             serialDevice?.setDataBits(prefs.getInt("data_bits", 8))
             serialDevice?.setStopBits(prefs.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1))
             serialDevice?.setParity(prefs.getInt("parity", UsbSerialInterface.PARITY_NONE))
+            val displayMode = prefs.getString("display_mode", "Hex")
             updateState { it.copy(statusMessage = "Connected to ${device.deviceName}") }
 
             serialDevice!!.read { data ->
                 runOnUiThread {
                     updateState {
-                        val newLog = it.serialLog + data.toHexString()
+                        val newLog = if (displayMode == "Hex") {
+                            it.serialLog + data.toHexString()
+                        } else {
+                            it.serialLog + String(data)
+                        }
                         it.copy(serialLog = newLog.takeLast(4000))
                     }
                 }
@@ -446,7 +469,12 @@ class MainActivity : ComponentActivity() {
                                 val data = buffer.copyOf(bytesRead)
                                 runOnUiThread {
                                     updateState {
-                                        val newLog = it.serialLog + data.toHexString()
+                                        val displayMode = getSharedPreferences("serial_settings", MODE_PRIVATE).getString("display_mode", "Hex")
+                                        val newLog = if (displayMode == "Hex") {
+                                            it.serialLog + data.toHexString()
+                                        } else {
+                                            it.serialLog + String(data)
+                                        }
                                         it.copy(serialLog = newLog.takeLast(4000))
                                     }
                                 }
@@ -516,7 +544,12 @@ class MainActivity : ComponentActivity() {
                     if (payload == null) break
                     runOnUiThread {
                         updateState {
-                            val newLog = it.serialLog + payload.toHexString()
+                            val displayMode = getSharedPreferences("serial_settings", MODE_PRIVATE).getString("display_mode", "Hex")
+                            val newLog = if (displayMode == "Hex") {
+                                it.serialLog + payload.toHexString()
+                            } else {
+                                it.serialLog + String(payload)
+                            }
                             it.copy(serialLog = newLog.takeLast(4000))
                         }
                     }
@@ -742,42 +775,130 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun MainContent(uiState: UiState) {
         val context = LocalContext.current
+        val backgroundColor = Color.Black.copy(alpha = 0.7f)
+        val contentColor = Color.White
+        val terminalColor = Color(0xFF00FF00) // Bright green for terminal text
+
         Box(modifier = Modifier.fillMaxSize()) {
             if (uiState.hasCameraPermission) {
                 CameraPreview()
             }
+
+            // Main UI content column
             Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 8.dp)
+                modifier = Modifier.fillMaxSize()
             ) {
-                Text(text = uiState.statusMessage, color = Color.White)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Serial Log", style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = Color.White)
-                Box(
+                // Top action buttons
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(100.dp)
-                        .background(Color.DarkGray)
-                        .padding(4.dp)
-                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    Text(text = uiState.serialLog, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    IconButton(
+                        onClick = { context.startActivity(Intent(context, MacroEditorActivity::class.java)) },
+                        modifier = Modifier.background(backgroundColor, CircleShape)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Macros", tint = contentColor)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
+                        modifier = Modifier.background(backgroundColor, CircleShape)
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = contentColor)
+                    }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                if (uiState.networkStatus.isNotBlank()) Text(text = uiState.networkStatus, color = Color.White)
-                if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = Color.White)
-                if (uiState.httpStatus.isNotBlank()) Text(text = uiState.httpStatus, color = Color.White)
-                if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = Color.White)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    Button(onClick = { sendSoftReset() }) { Text("Soft Reset") }
-                    Button(onClick = { sendUnlock() }) { Text("Unlock") }
+
+                // Spacer to push the main content to the bottom
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Main content area with a semi-transparent background
+                Surface(
+                    color = backgroundColor,
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        // Status Message
+                        Text(
+                            text = uiState.statusMessage,
+                            color = contentColor,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        // Serial Log
+                        Text(
+                            "Serial Log",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = contentColor,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp) // Increased height
+                                .background(Color.Black, RoundedCornerShape(8.dp))
+                                .border(1.dp, Color.DarkGray, RoundedCornerShape(8.dp))
+                                .padding(8.dp)
+                        ) {
+                            val scrollState = rememberScrollState()
+                            // Scroll to the bottom whenever the log changes
+                            LaunchedEffect(uiState.serialLog) {
+                                scrollState.animateScrollTo(scrollState.maxValue)
+                            }
+                            Text(
+                                text = uiState.serialLog,
+                                color = terminalColor,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scrollState)
+                            )
+                        }
+
+                        // Network Status Section
+                        Column(
+                            modifier = Modifier.padding(vertical = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                             if (uiState.networkStatus.isNotBlank()) Text(text = uiState.networkStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                             if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                             if (uiState.httpStatus.isNotBlank()) Text(text = uiState.httpStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                             if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        // Macro Buttons
+                        Text(
+                            "Macros",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = contentColor,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                        ) {
+                            if(uiState.macros.isEmpty()) {
+                                Text("No macros defined. Edit macros to add some.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                uiState.macros.forEach { macro ->
+                                    Button(
+                                        onClick = { sendMacroCommand(macro.command) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(macro.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-            IconButton(
-                onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
-                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            ) {
-                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
             }
         }
     }
@@ -824,16 +945,16 @@ class MainActivity : ComponentActivity() {
         uiState = reducer(uiState)
     }
 
-    private fun sendUnlock() {
-        val data = "\$X\n".toByteArray()
-        serialDevice?.write(data)
-    }
-
-    private fun sendSoftReset() {
-        val data = byteArrayOf(0x18)
-        serialDevice?.write(data)
+    private fun sendMacroCommand(command: String) {
+        if (command.startsWith("0x")) {
+            val hexData = command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            serialDevice?.write(hexData)
+        } else {
+            serialDevice?.write(command.toByteArray())
+        }
     }
 }
+
 
 data class UiState(
     val statusMessage: String = "Initializing...",
@@ -843,5 +964,6 @@ data class UiState(
     val tcpProxyStatus: String = "",
     val serialLog: String = "",
     val hasCameraPermission: Boolean = false,
-    val isCameraReady: Boolean = false
+    val isCameraReady: Boolean = false,
+    val macros: List<Macro> = emptyList()
 )
