@@ -1,5 +1,6 @@
 package com.jenniferbeidas.usbnetserver
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,14 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,8 +55,14 @@ class MacroEditorActivity : ComponentActivity() {
 @Composable
 fun MacroEditorScreen(onSave: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val prefs = remember { context.getSharedPreferences("macros", MODE_PRIVATE) }
-    var macros by remember { mutableStateOf(prefs.getStringSet("macros", emptySet())!!.map { it.split("|").let { p -> Macro(p[0], p[1]) } }.toMutableList()) }
+    val prefs = remember { context.getSharedPreferences("macros",         Context.MODE_PRIVATE) }
+    var macros by remember {
+        val macroStrings = prefs.getStringSet("macros", emptySet()) ?: emptySet()
+        mutableStateOf(macroStrings.mapNotNull {
+            val parts = it.split("|", limit = 2)
+            if (parts.size == 2) Macro(parts[0], parts[1]) else null
+        })
+    }
 
     Scaffold(
         topBar = { 
@@ -75,7 +80,7 @@ fun MacroEditorScreen(onSave: () -> Unit) {
             ) 
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { macros.add(Macro("New Macro", "")) }) {
+            FloatingActionButton(onClick = { macros = macros + Macro("New Macro", "") }) {
                 Icon(Icons.Default.Add, contentDescription = "Add Macro")
             }
         }
@@ -92,9 +97,9 @@ fun MacroEditorScreen(onSave: () -> Unit) {
             }
             itemsIndexed(macros) { index, macro ->
                 MacroEditCard(macro = macro, onDelete = {
-                    macros.removeAt(index)
+                    macros = macros.filterIndexed { i, _ -> i != index }
                 }, onUpdate = { updatedMacro ->
-                    macros[index] = updatedMacro
+                    macros = macros.toMutableList().also { it[index] = updatedMacro }
                 })
             }
             item {
