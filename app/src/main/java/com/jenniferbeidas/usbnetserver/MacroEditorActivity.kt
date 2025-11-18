@@ -89,7 +89,12 @@ fun MacroEditorScreen(prefs: SharedPreferences, gson: Gson, onSave: () -> Unit) 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Edit Macros") },
+                title = { 
+                    Column {
+                        Text("Edit Macros")
+                        Text("\\n=LF, \\r=CR, 0x..=Hex", style = MaterialTheme.typography.bodySmall)
+                    }
+                },
                 actions = {
                     IconButton(onClick = {
                         val macrosJson = gson.toJson(macros)
@@ -102,7 +107,7 @@ fun MacroEditorScreen(prefs: SharedPreferences, gson: Gson, onSave: () -> Unit) 
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { macros = (macros + Macro("New Macro", "")).toMutableList() }) {
+            FloatingActionButton(onClick = { macros = (macros + Macro("", "")).toMutableList() }) {
                 Icon(Icons.Default.Add, contentDescription = "Add Macro")
             }
         }

@@ -2,7 +2,6 @@
 package com.jenniferbeidas.usbnetserver
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -86,7 +85,6 @@ class MainActivity : ComponentActivity() {
 
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
-    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -105,13 +103,6 @@ class MainActivity : ComponentActivity() {
             MainContent(uiState, onLaunchMacroEditor = {
                 macroEditorResultLauncher.launch(Intent(this, MacroEditorActivity::class.java))
             })
-
-            // Handle the discovered device
-            val discoveredDevice = uiState.discoveredDevice
-            if (discoveredDevice != null) {
-                findAndConnectDevice(discoveredDevice)
-                viewModel.clearDiscoveredDevice()
-            }
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -131,17 +122,21 @@ class MainActivity : ComponentActivity() {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        registerReceiver(usbDeviceReceiver, deviceFilter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbDeviceReceiver, deviceFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(usbDeviceReceiver, deviceFilter)
+        }
 
         viewModel.updateStatusMessage("Please connect a USB serial device.")
         viewModel.loadMacros()
-        viewModel.checkForExistingDevice()
     }
 
     override fun onResume() {
         super.onResume()
         val sharedPreferences = getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
         rotation = sharedPreferences.getInt("rotation", 0)
+        viewModel.connectToFirstAvailableDevice()
     }
 
     override fun onNewIntent(intent: Intent) {

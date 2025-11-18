@@ -11,7 +11,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.felhr.usbserial.UsbSerialDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -97,20 +96,14 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         onUsbDeviceDetached()
     }
 
-    fun checkForExistingDevice() {
+    fun connectToFirstAvailableDevice() {
         viewModelScope.launch(Dispatchers.IO) {
+            if (_uiState.value.isConnected) return@launch
             val deviceList = usbManager.deviceList
-            for (device in deviceList.values) {
-                if (serialConnectionManager.isSerialDevice(device)) {
-                    _uiState.update { it.copy(discoveredDevice = device) }
-                    return@launch
-                }
+            deviceList.values.firstOrNull { usbManager.hasPermission(it) }?.let {
+                connectToDevice(it)
             }
         }
-    }
-
-    fun clearDiscoveredDevice() {
-        _uiState.update { it.copy(discoveredDevice = null) }
     }
 
     fun sendMacroCommand(command: String) {
@@ -119,7 +112,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             appendToSerialLog(hexData)
             serialConnectionManager.write(hexData)
         } else {
-            val data = command.toByteArray()
+            val data = command.replace("\\n", "\n").replace("\\r", "\r").toByteArray()
             appendToSerialLog(data)
             serialConnectionManager.write(data)
         }

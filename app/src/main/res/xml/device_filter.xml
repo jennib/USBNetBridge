@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- FTDI -->
+    <usb-device vendor-id="1027" />
+    <!-- Prolific -->
+    <usb-device vendor-id="1659" />
+    <!-- SiLabs -->
+    <usb-device vendor-id="4292" />
     <!-- CH340 -->
-    <usb-device vendor-id="6790" product-id="29987" />
+    <usb-device vendor-id="6790" />
     <!-- CP210x -->
     <usb-device vendor-id="4292" product-id="60000" />
-    <!-- FTDI -->
-    <usb-device vendor-id="1027" product-id="24577" />
-    <!-- Arduino Uno -->
-    <usb-device vendor-id="9025" product-id="67" />
+    <!-- CP2102N -->
+    <usb-device vendor-id="4292" product-id="60010" />
 </resources>

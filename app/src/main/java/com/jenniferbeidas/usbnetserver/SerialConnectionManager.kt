@@ -3,7 +3,6 @@ package com.jenniferbeidas.usbnetserver
 import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.util.Log
 import com.felhr.usbserial.UsbSerialDevice
 import com.felhr.usbserial.UsbSerialInterface
 
@@ -23,44 +22,48 @@ class SerialConnectionManager(
             return false
         }
 
-        var newSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
-        if (newSerialDevice == null) {
-            onStatusUpdate("Probing for serial interface failed, falling back to default.")
-            newSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
-        }
+        // The UsbSerialDevice takes ownership of the connection.
+        // We try probing first, as it's the most reliable for composite devices.
+        serialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
 
-        serialDevice = newSerialDevice
-
+        // If both failed, the device is not supported.
         if (serialDevice == null) {
             onStatusUpdate("Device not supported. Please use a standard serial device.")
+            connection.close() // We must close the connection manually here.
             return false
         }
 
-        if (serialDevice?.open() == true) {
-            val prefs = context.getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
-            serialDevice?.setBaudRate(prefs.getInt("baud_rate", 115200))
-            serialDevice?.setDataBits(prefs.getInt("data_bits", 8))
-            serialDevice?.setStopBits(prefs.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1))
-            serialDevice?.setParity(prefs.getInt("parity", UsbSerialInterface.PARITY_NONE))
-            onStatusUpdate("Connected to ${device.deviceName}")
-
-            serialDevice!!.read { data ->
-                onDataReceived(data)
-            }
+        // Now, try to open the created device.
+        if (serialDevice!!.open()) {
+            configureAndListen(device)
             return true
         } else {
             onStatusUpdate("Failed to open serial port. Is the device supported?")
+            // The UsbSerialDevice's close() method also closes the underlying connection.
+            serialDevice!!.close() 
             serialDevice = null
             return false
+        }
+    }
+
+    private fun configureAndListen(device: UsbDevice) {
+        serialDevice?.let {
+            val prefs = context.getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
+            it.setBaudRate(prefs.getInt("baud_rate", 115200))
+            it.setDataBits(prefs.getInt("data_bits", 8))
+            it.setStopBits(prefs.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1))
+            it.setParity(prefs.getInt("parity", UsbSerialInterface.PARITY_NONE))
+            it.read { data ->
+                onDataReceived(data)
+            }
+            onStatusUpdate("Connected to ${device.deviceName}")
         }
     }
 
     fun write(data: ByteArray) {
         if (serialDevice != null) {
             serialDevice?.write(data)
-            Log.d("SerialConnectionManager", "Data written: ${data.size} bytes")
         } else {
-            Log.w("SerialConnectionManager", "Serial device is null, not writing data.")
             onStatusUpdate("Cannot send data: not connected.")
         }
     }
@@ -70,17 +73,7 @@ class SerialConnectionManager(
         serialDevice = null
     }
 
-    // Helper to check if a device is potentially a serial device without fully connecting
     fun isSerialDevice(device: UsbDevice): Boolean {
-        val connection = usbManager.openDevice(device)
-        if (connection != null) {
-            var tempSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
-            if (tempSerialDevice == null) {
-                tempSerialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
-            }
-            connection.close()
-            return tempSerialDevice != null
-        }
-        return false
+        return UsbSerialDevice.isSupported(device)
     }
 }
