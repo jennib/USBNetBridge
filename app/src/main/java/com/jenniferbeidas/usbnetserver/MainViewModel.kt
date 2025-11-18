@@ -65,14 +65,14 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     private var latestJpeg: ByteArray? = null
 
     private var cameraServerSocket: ServerSocket? = null
-    private val cameraServerPort = 8889
+    private val cameraServerPort = 8887
 
     private var unifiedServer: ServerSocket? = null
-    private val unifiedPort = 8887
+    private val unifiedPort = 8888
     private val webSocketClients = mutableListOf<Socket>()
 
     private var tcpProxyServer: ServerSocket? = null
-    private val tcpProxyPort = 9999
+    private val tcpProxyPort = 8889
     private val tcpProxyClients = mutableListOf<Socket>()
 
     private val gson = Gson()
