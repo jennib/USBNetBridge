@@ -9,6 +9,8 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.felhr.usbserial.UsbSerialDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +75,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     private val tcpProxyPort = 9999
     private val tcpProxyClients = mutableListOf<Socket>()
 
+    private val gson = Gson()
+
     fun connectToDevice(device: UsbDevice) {
         viewModelScope.launch(Dispatchers.IO) {
             if (serialConnectionManager.open(device)) {
@@ -115,21 +119,44 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     fun loadMacros() {
         viewModelScope.launch {
             val prefs = application.getSharedPreferences("macros", Context.MODE_PRIVATE)
-            val macroStrings = prefs.getStringSet("macros", null)
-            if (macroStrings == null) {
-                val defaultMacros = setOf("Soft Reset|0x18|", "Unlock|\$X\n|")
-                prefs.edit().putStringSet("macros", defaultMacros).apply()
-                _uiState.update { it.copy(macros = defaultMacros.map { s -> s.split("|").let { p -> Macro(p[0], p[1], p[2]) } }) }
+            val oldMacrosString = prefs.getString("macros_ordered", null)
+
+            if (oldMacrosString != null) {
+                val legacyMacros = oldMacrosString.split("\n").mapNotNull {
+                    val parts = it.split("|", limit = 4)
+                    if (parts.size == 4) {
+                        val name = parts[0]
+                        val isBase64 = parts[1].toBoolean()
+                        val command = if (isBase64) String(Base64.decode(parts[2], Base64.DEFAULT)) else parts[2]
+                        val colorHex = parts[3].ifEmpty { null }
+                        Macro(name, command, colorHex)
+                    } else null
+                }.toList()
+                
+                saveMacros(legacyMacros)
+                prefs.edit().remove("macros_ordered").apply()
+                _uiState.update { it.copy(macros = legacyMacros) }
+
             } else {
-                _uiState.update { it.copy(macros = macroStrings.mapNotNull { s ->
-                    val parts = s.split("|", limit = 3)
-                    when (parts.size) {
-                        3 -> Macro(parts[0], parts[1], parts[2].ifEmpty { null })
-                        else -> null
-                    }
-                }) }
+                val macrosJson = prefs.getString("macros", null)
+                if (macrosJson == null) {
+                    val defaultMacros = listOf(Macro("Soft Reset", "0x18"), Macro("Unlock", "\$X\n"))
+                    saveMacros(defaultMacros)
+                    _uiState.update { it.copy(macros = defaultMacros) }
+                } else {
+                    val type = object : TypeToken<List<Macro>>() {}.type
+                    val macros = gson.fromJson<List<Macro>>(macrosJson, type)
+                    _uiState.update { it.copy(macros = macros) }
+                }
             }
         }
+    }
+    
+    fun saveMacros(macros: List<Macro>) {
+        val prefs = application.getSharedPreferences("macros", Context.MODE_PRIVATE)
+        val macrosJson = gson.toJson(macros)
+        prefs.edit().putString("macros", macrosJson).apply()
+        _uiState.update { it.copy(macros = macros) }
     }
 
     fun updateLatestJpeg(jpeg: ByteArray?) {
