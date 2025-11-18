@@ -116,9 +116,12 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     fun sendMacroCommand(command: String) {
         if (command.startsWith("0x")) {
             val hexData = command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            appendToSerialLog(hexData)
             serialConnectionManager.write(hexData)
         } else {
-            serialConnectionManager.write(command.toByteArray())
+            val data = command.toByteArray()
+            appendToSerialLog(data)
+            serialConnectionManager.write(data)
         }
     }
 

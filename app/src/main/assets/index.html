@@ -1,4 +1,4 @@
-'''
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -56,7 +56,7 @@
                 alert('Please enter the server IP address.');
                 return;
             }
-            const url = `wss://${ip}:8887`;
+            const url = `wss://${ip}:8888`;
             log(`Attempting to connect to ${url}...`);
 
             socket = new WebSocket(url);
@@ -133,4 +133,3 @@
     </script>
 </body>
 </html>
-'''
