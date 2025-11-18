@@ -35,6 +35,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import com.google.accompanist.flowlayout.FlowRow
+import com.google.accompanist.flowlayout.MainAxisAlignment
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -319,9 +321,11 @@ class MainActivity : ComponentActivity() {
                             color = contentColor,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
-                        Row(
+                        FlowRow(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                            mainAxisSpacing = 8.dp,
+                            crossAxisSpacing = 8.dp,
+                            mainAxisAlignment = MainAxisAlignment.Center
                         ) {
                             if(uiState.macros.isEmpty()) {
                                 Text("No macros defined. Edit macros to add some.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
