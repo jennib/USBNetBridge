@@ -117,11 +117,17 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             val prefs = application.getSharedPreferences("macros", Context.MODE_PRIVATE)
             val macroStrings = prefs.getStringSet("macros", null)
             if (macroStrings == null) {
-                val defaultMacros = setOf("Soft Reset|0x18", "Unlock|\$X\n")
+                val defaultMacros = setOf("Soft Reset|0x18|", "Unlock|\$X\n|")
                 prefs.edit().putStringSet("macros", defaultMacros).apply()
-                _uiState.update { it.copy(macros = defaultMacros.map { s -> s.split("|").let { p -> Macro(p[0], p[1]) } }) }
+                _uiState.update { it.copy(macros = defaultMacros.map { s -> s.split("|").let { p -> Macro(p[0], p[1], p[2]) } }) }
             } else {
-                _uiState.update { it.copy(macros = macroStrings.map { s -> s.split("|").let { p -> Macro(p[0], p[1]) } }) }
+                _uiState.update { it.copy(macros = macroStrings.mapNotNull { s ->
+                    val parts = s.split("|", limit = 3)
+                    when (parts.size) {
+                        3 -> Macro(parts[0], parts[1], parts[2].ifEmpty { null })
+                        else -> null
+                    }
+                }) }
             }
         }
     }

@@ -3,6 +3,7 @@ package com.jenniferbeidas.usbnetserver
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -83,10 +85,18 @@ class MainActivity : ComponentActivity() {
         val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             viewModel.setCameraPermission(isGranted)
         }
+        
+        val macroEditorResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                viewModel.loadMacros()
+            }
+        }
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-            MainContent(uiState)
+            MainContent(uiState, onLaunchMacroEditor = {
+                macroEditorResultLauncher.launch(Intent(this, MacroEditorActivity::class.java))
+            })
 
             // Handle the discovered device
             val discoveredDevice = uiState.discoveredDevice
@@ -193,7 +203,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun MainContent(uiState: UiState) {
+    fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit) {
         val context = LocalContext.current
         val backgroundColor = Color.Black.copy(alpha = 0.7f)
         val contentColor = Color.White
@@ -216,7 +226,7 @@ class MainActivity : ComponentActivity() {
                     horizontalArrangement = Arrangement.End
                 ) {
                     IconButton(
-                        onClick = { context.startActivity(Intent(context, MacroEditorActivity::class.java)) },
+                        onClick = onLaunchMacroEditor,
                         modifier = Modifier.background(backgroundColor, CircleShape)
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit Macros", tint = contentColor)
@@ -308,9 +318,15 @@ class MainActivity : ComponentActivity() {
                                 Text("No macros defined. Edit macros to add some.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                             } else {
                                 uiState.macros.forEach { macro ->
+                                    val buttonColor = if (macro.colorHex != null && macro.colorHex.isNotEmpty()) {
+                                        Color(android.graphics.Color.parseColor(macro.colorHex))
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    }
                                     Button(
                                         onClick = { viewModel.sendMacroCommand(macro.command) },
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
                                     ) {
                                         Text(macro.name)
                                     }
