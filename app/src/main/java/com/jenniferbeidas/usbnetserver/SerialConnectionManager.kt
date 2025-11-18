@@ -3,6 +3,7 @@ package com.jenniferbeidas.usbnetserver
 import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.util.Log
 import com.felhr.usbserial.UsbSerialDevice
 import com.felhr.usbserial.UsbSerialInterface
 
@@ -55,7 +56,13 @@ class SerialConnectionManager(
     }
 
     fun write(data: ByteArray) {
-        serialDevice?.write(data)
+        if (serialDevice != null) {
+            serialDevice?.write(data)
+            Log.d("SerialConnectionManager", "Data written: ${data.size} bytes")
+        } else {
+            Log.w("SerialConnectionManager", "Serial device is null, not writing data.")
+            onStatusUpdate("Cannot send data: not connected.")
+        }
     }
 
     fun close() {
