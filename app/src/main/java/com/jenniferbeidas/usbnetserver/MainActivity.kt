@@ -10,7 +10,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.hardware.usb.UsbDevice
@@ -20,8 +23,8 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -57,7 +60,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -76,6 +82,8 @@ class MainActivity : ComponentActivity() {
     private val tag = "USBNetServer"
     private val viewModel: MainViewModel by viewModels()
 
+    private var rotation by mutableStateOf(0)
+
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -85,7 +93,7 @@ class MainActivity : ComponentActivity() {
         val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             viewModel.setCameraPermission(isGranted)
         }
-        
+
         val macroEditorResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 viewModel.loadMacros()
@@ -128,6 +136,12 @@ class MainActivity : ComponentActivity() {
         viewModel.updateStatusMessage("Please connect a USB serial device.")
         viewModel.loadMacros()
         viewModel.checkForExistingDevice()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val sharedPreferences = getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
+        rotation = sharedPreferences.getInt("rotation", 0)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -211,7 +225,7 @@ class MainActivity : ComponentActivity() {
 
         Box(modifier = Modifier.fillMaxSize()) {
             if (uiState.hasCameraPermission) {
-                CameraPreview(viewModel)
+                CameraPreview(viewModel, rotation)
             }
 
             // Main UI content column
@@ -340,59 +354,86 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CameraPreview(viewModel: MainViewModel) {
+    fun CameraPreview(viewModel: MainViewModel, rotation: Int) {
         val lifecycleOwner = LocalLifecycleOwner.current
         val context = LocalContext.current
         val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
 
-        AndroidView(
-            factory = { ctx ->
-                val previewView = androidx.camera.view.PreviewView(ctx)
-                val executor = ContextCompat.getMainExecutor(ctx)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                    
-                    val imageAnalysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
+        key(rotation) {
+            AndroidView(
+                factory = { ctx ->
+                    val previewView = androidx.camera.view.PreviewView(ctx)
+                    val executor = ContextCompat.getMainExecutor(ctx)
+                    cameraProviderFuture.addListener({
+                        val cameraProvider = cameraProviderFuture.get()
 
-                    imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                        val jpeg = imageProxy.toJpeg()
-                        if(jpeg != null) {
-                            viewModel.updateLatestJpeg(jpeg)
+                        val preview = Preview.Builder()
+                            .build()
+                            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+
+                        val imageAnalysis = ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+
+                        imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                            val jpeg = imageProxy.toJpeg(rotation)
+                            if(jpeg != null) {
+                                viewModel.updateLatestJpeg(jpeg)
+                            }
+                            imageProxy.close()
                         }
-                        imageProxy.close()
-                    }
-                    
-                    try {
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis)
-                        viewModel.startCameraStreamServer()
-                    } catch (e: Exception) {
-                        Log.e(tag, "Use case binding failed", e)
-                    }
-                }, executor)
-                previewView
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+                        
+                        try {
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis)
+                            viewModel.startCameraStreamServer()
+                        } catch (e: Exception) {
+                            Log.e(tag, "Use case binding failed", e)
+                        }
+                    }, executor)
+                    previewView
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 
-    private fun ImageProxy.toJpeg(): ByteArray? {
+    private fun ImageProxy.toJpeg(userRotation: Int): ByteArray? {
         if (format != ImageFormat.YUV_420_888) return null
+
         val yBuffer = planes[0].buffer
         val uBuffer = planes[1].buffer
         val vBuffer = planes[2].buffer
+
         val ySize = yBuffer.remaining()
         val uSize = uBuffer.remaining()
         val vSize = vBuffer.remaining()
+
         val nv21 = ByteArray(ySize + uSize + vSize)
+
         yBuffer.get(nv21, 0, ySize)
         vBuffer.get(nv21, ySize, vSize)
         uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, this.width, this.height, null)
         val out = ByteArrayOutputStream()
-        YuvImage(nv21, ImageFormat.NV21, this.width, this.height, null).compressToJpeg(Rect(0, 0, width, height), 80, out)
-        return out.toByteArray()
+        yuvImage.compressToJpeg(Rect(0, 0, this.width, this.height), 80, out)
+        val jpegBytes = out.toByteArray()
+
+        val totalRotation = (this.imageInfo.rotationDegrees + userRotation) % 360
+
+        if (totalRotation == 0) {
+            return jpegBytes
+        }
+
+        val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+
+        val matrix = Matrix().apply { postRotate(totalRotation.toFloat()) }
+        val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+
+        val rotatedOut = ByteArrayOutputStream()
+        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, rotatedOut)
+
+        return rotatedOut.toByteArray()
     }
 }
