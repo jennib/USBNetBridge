@@ -70,7 +70,7 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
     var dataBits by remember { mutableStateOf(sharedPreferences.getInt("data_bits", 8).toString()) }
     var stopBits by remember { mutableStateOf(stopBitsOptions.entries.find { it.value == sharedPreferences.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1) }?.key ?: "1") }
     var parity by remember { mutableStateOf(parityOptions.entries.find { it.value == sharedPreferences.getInt("parity", UsbSerialInterface.PARITY_NONE) }?.key ?: "None") }
-    var displayMode by remember { mutableStateOf(sharedPreferences.getString("display_mode", "Hex") ?: "Hex") }
+    var displayMode by remember { mutableStateOf(sharedPreferences.getString("display_mode", "Raw") ?: "Raw") }
     var startOnBoot by remember { mutableStateOf(sharedPreferences.getBoolean("start_on_boot", false)) }
     var keepScreenOn by remember { mutableStateOf(sharedPreferences.getBoolean("keep_screen_on", false)) }
 

@@ -76,16 +76,22 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     private val tcpProxyClients = mutableListOf<Socket>()
 
     private val gson = Gson()
+    
+    init {
+        startUnifiedServer()
+    }
 
     fun connectToDevice(device: UsbDevice) {
         viewModelScope.launch(Dispatchers.IO) {
             if (serialConnectionManager.open(device)) {
+                _uiState.update { it.copy(isConnected = true) }
                 startAllServers()
             }
         }
     }
 
     fun disconnect() {
+        _uiState.update { it.copy(isConnected = false) }
         serialConnectionManager.close()
         stopAllServers()
         onUsbDeviceDetached()
@@ -165,13 +171,11 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
     private fun startAllServers() {
         startCameraStreamServer()
-        startUnifiedServer()
         startTcpProxyServer()
     }
 
     private fun stopAllServers() {
         cameraServerSocket?.close()
-        unifiedServer?.close()
         tcpProxyServer?.close()
     }
 
@@ -343,7 +347,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
                 if (headers["upgrade"]?.equals("websocket", ignoreCase = true) == true) {
                     val key = headers["sec-websocket-key"]
-                    if (key == null) {
+                    if (key == null || !_uiState.value.isConnected) {
                         client.close()
                         return@launch
                     }
@@ -368,7 +372,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
                 } else {
                      try {
-                        val htmlContent = application.assets.open("index.html").bufferedReader().use { it.readText() }
+                        val htmlFile = if (_uiState.value.isConnected) "index.html" else "no_device.html"
+                        val htmlContent = application.assets.open(htmlFile).bufferedReader().use { it.readText() }
                         val response = "HTTP/1.1 200 OK\r\n" +
                                 "Content-Type: text/html\r\n" +
                                 "Content-Length: ${htmlContent.length}\r\n" +
@@ -589,7 +594,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
     fun appendToSerialLog(data: ByteArray) {
         val prefs = application.getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
-        val displayMode = prefs.getString("display_mode", "Hex")
+        val displayMode = prefs.getString("display_mode", "Raw")
         val newLog = if (displayMode == "Hex") {
             _uiState.value.serialLog + data.toHexString()
         } else {
