@@ -52,7 +52,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     private val serialConnectionManager = SerialConnectionManager(
         application,
         usbManager,
-        onDataReceived = { data -> 
+        onDataReceived = { data ->
             appendToSerialLog(data)
             writeToWebsocket(data)
             writeToTcp(data)
@@ -62,6 +62,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
     @Volatile
     private var latestJpeg: ByteArray? = null
+    @Volatile
+    private var latestAudio: ByteArray? = null
 
     private var cameraServerSocket: ServerSocket? = null
     private val cameraServerPort = 8887
@@ -74,8 +76,12 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     private val tcpProxyPort = 8889
     private val tcpProxyClients = mutableListOf<Socket>()
 
+    private val audioCaptor = AudioCaptor(application) { audioData ->
+        updateLatestAudio(audioData)
+    }
+
     private val gson = Gson()
-    
+
     init {
         startUnifiedServer()
     }
@@ -134,7 +140,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                         Macro(name, command, colorHex)
                     } else null
                 }.toList()
-                
+
                 saveMacros(legacyMacros)
                 prefs.edit().remove("macros_ordered").apply()
                 _uiState.update { it.copy(macros = legacyMacros) }
@@ -153,7 +159,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             }
         }
     }
-    
+
     fun saveMacros(macros: List<Macro>) {
         val prefs = application.getSharedPreferences("macros", Context.MODE_PRIVATE)
         val macrosJson = gson.toJson(macros)
@@ -165,17 +171,22 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         latestJpeg = jpeg
     }
 
+    fun updateLatestAudio(audio: ByteArray?) {
+        latestAudio = audio
+    }
+
     private fun startAllServers() {
-        startCameraStreamServer()
+        startCameraAndAudioStreamServer()
         startTcpProxyServer()
     }
 
     private fun stopAllServers() {
         cameraServerSocket?.close()
         tcpProxyServer?.close()
+        audioCaptor.stop()
     }
 
-    fun startCameraStreamServer() {
+    fun startCameraAndAudioStreamServer() {
         if (cameraServerSocket != null && !cameraServerSocket!!.isClosed) return
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -188,6 +199,10 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
                 cameraServerSocket = ServerSocket(cameraServerPort)
                 _uiState.update { it.copy(cameraStatus = "Camera: $ipAddress:$cameraServerPort") }
+
+                if (_uiState.value.hasAudioPermission) {
+                    audioCaptor.start()
+                }
 
                 while (true) {
                     val clientSocket = cameraServerSocket!!.accept()
@@ -214,9 +229,20 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                                                 "Content-Length: ${jpegBytes.size}\r\n\r\n").toByteArray()
                                     )
                                     outputStream.write(jpegBytes)
-                                    outputStream.write("\r\n".toByteArray())
                                     outputStream.flush()
                                 }
+
+                                val audioBytes = latestAudio
+                                if (audioBytes != null) {
+                                    outputStream.write(
+                                        ("--boundary\r\n" +
+                                                "Content-Type: audio/wav\r\n" +
+                                                "Content-Length: ${audioBytes.size}\r\n\r\n").toByteArray()
+                                    )
+                                    outputStream.write(audioBytes)
+                                    outputStream.flush()
+                                }
+
                                 kotlinx.coroutines.delay(100) // Frame rate limiter
                             }
                         } catch (e: IOException) {
@@ -585,6 +611,13 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         _uiState.update { it.copy(hasCameraPermission = granted) }
         if(!granted) {
             updateStatusMessage("Camera permission is required for preview.")
+        }
+    }
+
+    fun setAudioPermission(granted: Boolean) {
+        _uiState.update { it.copy(hasAudioPermission = granted) }
+        if(!granted) {
+            updateStatusMessage("Audio permission is required for streaming.")
         }
     }
 

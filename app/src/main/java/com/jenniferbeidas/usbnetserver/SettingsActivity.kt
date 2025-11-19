@@ -2,6 +2,7 @@ package com.jenniferbeidas.usbnetserver
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -13,8 +14,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -22,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -36,6 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.net.toUri
@@ -77,6 +86,29 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
     var keepScreenOn by remember { mutableStateOf(sharedPreferences.getBoolean("keep_screen_on", false)) }
 
     Column(modifier = modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            Button(
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.buymeacoffee.com/jennibm"))
+                    context.startActivity(intent)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFFFDD00),
+                    contentColor = Color.Black
+                )
+            ) {
+                Icon(
+                    Icons.Default.Coffee,
+                    contentDescription = "Buy me a coffee",
+                    modifier = Modifier.size(ButtonDefaults.IconSize)
+                )
+                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                Text("Buy me a coffee")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         Text("Serial Port Settings", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
         SettingsDropdown(label = "Baud Rate", selectedOption = baudRate, options = baudRateOptions) { baudRate = it }
         SettingsDropdown(label = "Data Bits", selectedOption = dataBits, options = dataBitsOptions) { dataBits = it }
@@ -105,7 +137,25 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
             Switch(checked = keepScreenOn, onCheckedChange = { keepScreenOn = it })
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = {
+            sharedPreferences.edit {
+                putInt("baud_rate", baudRate.toInt())
+                putInt("data_bits", dataBits.toInt())
+                putInt("stop_bits", stopBitsOptions.getValue(stopBits))
+                putInt("parity", parityOptions.getValue(parity))
+                putString("display_mode", displayMode)
+                putInt("rotation", rotation.toInt())
+                putBoolean("start_on_boot", startOnBoot)
+                putBoolean("keep_screen_on", keepScreenOn)
+            }
+            onSave()
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("Save")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(onClick = {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
@@ -128,22 +178,20 @@ private fun SettingsScreen(modifier: Modifier = Modifier, onSave: () -> Unit) {
             Text("Reset to Default")
         }
 
-        Spacer(modifier = Modifier.height(16.dp)) // Add some space before the final button
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Button(onClick = {
-            sharedPreferences.edit {
-                putInt("baud_rate", baudRate.toInt())
-                putInt("data_bits", dataBits.toInt())
-                putInt("stop_bits", stopBitsOptions.getValue(stopBits))
-                putInt("parity", parityOptions.getValue(parity))
-                putString("display_mode", displayMode)
-                putInt("rotation", rotation.toInt())
-                putBoolean("start_on_boot", startOnBoot)
-                putBoolean("keep_screen_on", keepScreenOn)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            val annotatedString = buildAnnotatedString {
+                withStyle(style = SpanStyle(color = Color.Blue)) {
+                    append("View on GitHub")
+                    addStringAnnotation("URL", "https://github.com/jennib/USBNetBridge", 0, 14)
+                }
             }
-            onSave()
-        }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Text("Save")
+            ClickableText(text = annotatedString, onClick = {
+                annotatedString.getStringAnnotations("URL", it, it).firstOrNull()?.let { annotation ->
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(annotation.item)))
+                }
+            })
         }
     }
 }

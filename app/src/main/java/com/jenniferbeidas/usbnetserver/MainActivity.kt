@@ -1,8 +1,6 @@
-// version 1.0.0
 package com.jenniferbeidas.usbnetserver
 
 import android.Manifest
-import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -10,21 +8,18 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -35,8 +30,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import com.google.accompanist.flowlayout.FlowRow
-import com.google.accompanist.flowlayout.MainAxisAlignment
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,8 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -75,6 +67,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.accompanist.flowlayout.FlowRow
+import com.google.accompanist.flowlayout.MainAxisAlignment
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
@@ -83,19 +77,20 @@ class MainActivity : ComponentActivity() {
     private val tag = "USBNetServer"
     private val viewModel: MainViewModel by viewModels()
 
-    private var rotation by mutableStateOf(0)
+    private var rotation by mutableIntStateOf(0)
 
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            viewModel.setCameraPermission(isGranted)
+        val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            viewModel.setCameraPermission(permissions[Manifest.permission.CAMERA] ?: false)
+            viewModel.setAudioPermission(permissions[Manifest.permission.RECORD_AUDIO] ?: false)
         }
 
         val macroEditorResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
+            if (result.resultCode == RESULT_OK) {
                 viewModel.loadMacros()
             }
         }
@@ -107,28 +102,29 @@ class MainActivity : ComponentActivity() {
             })
         }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            viewModel.setCameraPermission(true)
+        val permissionsToRequest = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.CAMERA)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.RECORD_AUDIO)
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         } else {
-            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+            viewModel.setCameraPermission(true)
+            viewModel.setAudioPermission(true)
         }
 
         val permissionFilter = IntentFilter(actionUsbPermission)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbPermissionReceiver, permissionFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(usbPermissionReceiver, permissionFilter)
-        }
+        registerReceiver(usbPermissionReceiver, permissionFilter, RECEIVER_NOT_EXPORTED)
 
         val deviceFilter = IntentFilter().apply {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbDeviceReceiver, deviceFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(usbDeviceReceiver, deviceFilter)
-        }
+        registerReceiver(usbDeviceReceiver, deviceFilter, RECEIVER_NOT_EXPORTED)
 
         viewModel.updateStatusMessage("Please connect a USB serial device.")
         viewModel.loadMacros()
@@ -136,7 +132,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        val sharedPreferences = getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
+        val sharedPreferences = getSharedPreferences("serial_settings", MODE_PRIVATE)
         rotation = sharedPreferences.getInt("rotation", 0)
         viewModel.connectToFirstAvailableDevice()
     }
@@ -144,12 +140,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
-            val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-            }
+            val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
             device?.let { findAndConnectDevice(it) }
         }
     }
@@ -165,12 +156,7 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                    }
+                    val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                     device?.let { findAndConnectDevice(it) }
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
@@ -183,12 +169,7 @@ class MainActivity : ComponentActivity() {
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == actionUsbPermission) {
-                val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                }
+                val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                 if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && device != null) {
                     viewModel.connectToDevice(device)
                 } else {
@@ -199,13 +180,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun findAndConnectDevice(device: UsbDevice) {
-        val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val usbManager = getSystemService(USB_SERVICE) as UsbManager
         if (!usbManager.hasPermission(device)) {
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            } else {
-                PendingIntent.FLAG_UPDATE_CURRENT
-            }
+            val flags = PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), flags)
             usbManager.requestPermission(device, permissionIntent)
         } else {
@@ -356,84 +333,66 @@ class MainActivity : ComponentActivity() {
     fun CameraPreview(viewModel: MainViewModel, rotation: Int) {
         val lifecycleOwner = LocalLifecycleOwner.current
         val context = LocalContext.current
-        val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+        val previewView = remember { androidx.camera.view.PreviewView(context) }
 
-        key(rotation) {
-            AndroidView(
-                factory = { ctx ->
-                    val previewView = androidx.camera.view.PreviewView(ctx)
-                    val executor = ContextCompat.getMainExecutor(ctx)
-                    cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
+        LaunchedEffect(rotation) {
+            val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+            cameraProviderFuture.addListener({
+                val cameraProvider = cameraProviderFuture.get()
+                val preview = Preview.Builder().build().also {
+                    it.surfaceProvider = previewView.surfaceProvider
+                }
 
-                        val preview = Preview.Builder()
-                            .build()
-                            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+                @Suppress("DEPRECATION")
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
 
-                        val imageAnalysis = ImageAnalysis.Builder()
-                            .setTargetResolution(android.util.Size(640, 480))
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
+                imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                    val jpeg = imageProxy.toJpeg(rotation)
+                    if (jpeg != null) {
+                        viewModel.updateLatestJpeg(jpeg)
+                    }
+                    imageProxy.close()
+                }
 
-                        imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                            val jpeg = imageProxy.toJpeg(rotation)
-                            if(jpeg != null) {
-                                viewModel.updateLatestJpeg(jpeg)
-                            }
-                            imageProxy.close()
-                        }
-                        
-                        try {
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis)
-                            viewModel.startCameraStreamServer()
-                        } catch (e: Exception) {
-                            Log.e(tag, "Use case binding failed", e)
-                        }
-                    }, executor)
-                    previewView
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                try {
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        CameraSelector.DEFAULT_BACK_CAMERA,
+                        preview,
+                        imageAnalysis
+                    )
+                    viewModel.startCameraAndAudioStreamServer()
+                } catch (e: Exception) {
+                    Log.e(tag, "Use case binding failed", e)
+                }
+            }, ContextCompat.getMainExecutor(context))
         }
+
+        AndroidView({ previewView }, modifier = Modifier.fillMaxSize())
     }
 
+    @OptIn(ExperimentalGetImage::class)
     private fun ImageProxy.toJpeg(userRotation: Int): ByteArray? {
-        if (format != ImageFormat.YUV_420_888) return null
-
-        val yBuffer = planes[0].buffer
-        val uBuffer = planes[1].buffer
-        val vBuffer = planes[2].buffer
-
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-
-        val nv21 = ByteArray(ySize + uSize + vSize)
-
-        yBuffer.get(nv21, 0, ySize)
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
-
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, this.width, this.height, null)
-        val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, this.width, this.height), 80, out)
-        val jpegBytes = out.toByteArray()
-
-        val totalRotation = (this.imageInfo.rotationDegrees + userRotation) % 360
-
-        if (totalRotation == 0) {
-            return jpegBytes
+        val bitmap = this.toBitmap()
+        if (bitmap == null) {
+            Log.e(tag, "Failed to convert ImageProxy to Bitmap.")
+            return null
         }
 
-        val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+        val totalRotation = (this.imageInfo.rotationDegrees + userRotation) % 360
+        val rotatedBitmap = if (totalRotation != 0) {
+            val matrix = Matrix().apply { postRotate(totalRotation.toFloat()) }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } else {
+            bitmap
+        }
 
-        val matrix = Matrix().apply { postRotate(totalRotation.toFloat()) }
-        val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-
-        val rotatedOut = ByteArrayOutputStream()
-        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, rotatedOut)
-
-        return rotatedOut.toByteArray()
+        val outputStream = ByteArrayOutputStream()
+        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+        return outputStream.toByteArray()
     }
 }

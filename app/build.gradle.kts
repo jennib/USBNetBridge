@@ -12,8 +12,8 @@ android {
         applicationId = "com.jenniferbeidas.usbnetserver"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,6 +40,8 @@ android {
 }
 
 dependencies {
+    val cameraVersion = "1.5.1"
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -50,10 +52,10 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation("androidx.compose.material:material-icons-extended:1.6.7")
     implementation(libs.usbserial)
-    implementation("androidx.camera:camera-core:1.5.1")
-    implementation("androidx.camera:camera-camera2:1.5.1")
-    implementation("androidx.camera:camera-lifecycle:1.5.1")
-    implementation("androidx.camera:camera-view:1.5.1")
+    implementation("androidx.camera:camera-core:${cameraVersion}")
+    implementation("androidx.camera:camera-camera2:${cameraVersion}")
+    implementation("androidx.camera:camera-lifecycle:${cameraVersion}")
+    implementation("androidx.camera:camera-view:${cameraVersion}")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
     implementation("org.bouncycastle:bcprov-jdk15on:1.70")
     implementation("org.bouncycastle:bcpkix-jdk15on:1.70")

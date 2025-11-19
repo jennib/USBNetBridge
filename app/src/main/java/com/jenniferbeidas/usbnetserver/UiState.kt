@@ -10,6 +10,7 @@ data class UiState(
     val tcpProxyStatus: String = "",
     val serialLog: String = "",
     val hasCameraPermission: Boolean = false,
+    val hasAudioPermission: Boolean = false,
     val isCameraReady: Boolean = false,
     val macros: List<Macro> = emptyList(),
     val discoveredDevice: UsbDevice? = null,
