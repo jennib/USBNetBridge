@@ -176,7 +176,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     }
 
     private fun startAllServers() {
-        startCameraAndAudioStreamServer()
+        startVideoStreamServer()
         startTcpProxyServer()
     }
 
@@ -186,7 +186,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         audioCaptor.stop()
     }
 
-    fun startCameraAndAudioStreamServer() {
+    fun startVideoStreamServer() {
         if (cameraServerSocket != null && !cameraServerSocket!!.isClosed) return
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -199,10 +199,6 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
                 cameraServerSocket = ServerSocket(cameraServerPort)
                 _uiState.update { it.copy(cameraStatus = "Camera: $ipAddress:$cameraServerPort") }
-
-                if (_uiState.value.hasAudioPermission) {
-                    audioCaptor.start()
-                }
 
                 while (true) {
                     val clientSocket = cameraServerSocket!!.accept()
@@ -229,17 +225,6 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                                                 "Content-Length: ${jpegBytes.size}\r\n\r\n").toByteArray()
                                     )
                                     outputStream.write(jpegBytes)
-                                    outputStream.flush()
-                                }
-
-                                val audioBytes = latestAudio
-                                if (audioBytes != null) {
-                                    outputStream.write(
-                                        ("--boundary\r\n" +
-                                                "Content-Type: audio/wav\r\n" +
-                                                "Content-Length: ${audioBytes.size}\r\n\r\n").toByteArray()
-                                    )
-                                    outputStream.write(audioBytes)
                                     outputStream.flush()
                                 }
 

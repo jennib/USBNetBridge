@@ -24,6 +24,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -333,7 +334,11 @@ class MainActivity : ComponentActivity() {
     fun CameraPreview(viewModel: MainViewModel, rotation: Int) {
         val lifecycleOwner = LocalLifecycleOwner.current
         val context = LocalContext.current
-        val previewView = remember { androidx.camera.view.PreviewView(context) }
+        val previewView = remember {
+            PreviewView(context).apply {
+                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            }
+        }
 
         LaunchedEffect(rotation) {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -365,7 +370,7 @@ class MainActivity : ComponentActivity() {
                         preview,
                         imageAnalysis
                     )
-                    viewModel.startCameraAndAudioStreamServer()
+                    viewModel.startVideoStreamServer()
                 } catch (e: Exception) {
                     Log.e(tag, "Use case binding failed", e)
                 }
