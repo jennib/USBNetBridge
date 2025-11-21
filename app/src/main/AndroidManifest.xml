@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:name="android.hardware.usb.host" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -23,7 +22,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:launchMode="singleTop"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
             android:theme="@style/Theme.USBNetworkServer">
@@ -48,7 +46,7 @@
             android:label="Privacy Policy" />
         <activity
             android:name=".MacroEditorActivity"
-            android.label="Edit Macros" />
+            android:label="Edit Macros" />
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
