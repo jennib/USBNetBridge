@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>WebRTC Stream</title>
     <style>
@@ -22,7 +22,6 @@
         let lastVideoTime = -1;
         let candidateQueue = [];
         let isRemoteDescriptionSet = false;
-        let audioStream = new MediaStream(); // Create a new MediaStream for audio
 
         // --- Function to check for frozen video ---
         function checkVideo() {
@@ -97,29 +96,25 @@
             }
         };
 
-        // FIX 3: Handle "Naked Tracks" (Missing Stream ID)
         pc.ontrack = (event) => {
             console.log("CLIENT: Received remote track:", event.track.kind);
-            if (event.track.kind === 'video') {
-                if (event.streams && event.streams[0]) {
-                    console.log("CLIENT: Video stream found. Attaching.");
-                    video.srcObject = event.streams[0];
-                } else {
-                    console.log("CLIENT: No video stream ID found. Creating new MediaStream from track.");
-                    const videoStream = new MediaStream([event.track]);
-                    video.srcObject = videoStream;
-                }
-            } else if (event.track.kind === 'audio') {
-                console.log("CLIENT: Audio track received.");
-                audioStream.addTrack(event.track);
-                video.srcObject = audioStream; // This seems wrong, should probably merge with video
+
+            // Use a single stream for both audio and video.
+            let stream = video.srcObject;
+            if (!stream) {
+                stream = new MediaStream();
+                video.srcObject = stream;
             }
-            
-            // Force play to ensure "muted autoplay" works
+            stream.addTrack(event.track);
+
+            // Muted autoplay should now work more reliably.
+            // The 'muted' attribute on the <video> tag is important.
             video.play().catch(e => console.error("Autoplay failed:", e));
             
-            // Start freeze watchdog
-            setTimeout(checkVideo, 5000);
+            // Start freeze watchdog only after the video track is received
+            if (event.track.kind === 'video') {
+                 setTimeout(checkVideo, 5000);
+            }
         };
 
         pc.onconnectionstatechange = () => {
