@@ -7,10 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -19,9 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -68,9 +65,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.toColorInt
 import com.google.accompanist.flowlayout.FlowRow
 import com.google.accompanist.flowlayout.MainAxisAlignment
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -183,7 +180,11 @@ class MainActivity : ComponentActivity() {
     private fun findAndConnectDevice(device: UsbDevice) {
         val usbManager = getSystemService(USB_SERVICE) as UsbManager
         if (!usbManager.hasPermission(device)) {
-            val flags = PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
             val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), flags)
             usbManager.requestPermission(device, permissionIntent)
         } else {
@@ -290,6 +291,7 @@ class MainActivity : ComponentActivity() {
                              if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.httpStatus.isNotBlank()) Text(text = uiState.httpStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                             if (uiState.webrtcStatus.isNotBlank()) Text(text = uiState.webrtcStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                         }
 
                         // Macro Buttons
@@ -310,7 +312,7 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 uiState.macros.forEach { macro ->
                                     val buttonColor = if (macro.colorHex != null && macro.colorHex.isNotEmpty()) {
-                                        Color(android.graphics.Color.parseColor(macro.colorHex))
+                                        Color(macro.colorHex.toColorInt())
                                     } else {
                                         MaterialTheme.colorScheme.primary
                                     }
@@ -355,11 +357,7 @@ class MainActivity : ComponentActivity() {
                     .build()
 
                 imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                    val jpeg = imageProxy.toJpeg(rotation)
-                    if (jpeg != null) {
-                        viewModel.updateLatestJpeg(jpeg)
-                    }
-                    imageProxy.close()
+                    viewModel.processFrame(imageProxy)
                 }
 
                 try {
@@ -370,7 +368,7 @@ class MainActivity : ComponentActivity() {
                         preview,
                         imageAnalysis
                     )
-                    viewModel.startVideoStreamServer()
+                    viewModel.startWebRtc()
                 } catch (e: Exception) {
                     Log.e(tag, "Use case binding failed", e)
                 }
@@ -378,26 +376,5 @@ class MainActivity : ComponentActivity() {
         }
 
         AndroidView({ previewView }, modifier = Modifier.fillMaxSize())
-    }
-
-    @OptIn(ExperimentalGetImage::class)
-    private fun ImageProxy.toJpeg(userRotation: Int): ByteArray? {
-        val bitmap = this.toBitmap()
-        if (bitmap == null) {
-            Log.e(tag, "Failed to convert ImageProxy to Bitmap.")
-            return null
-        }
-
-        val totalRotation = (this.imageInfo.rotationDegrees + userRotation) % 360
-        val rotatedBitmap = if (totalRotation != 0) {
-            val matrix = Matrix().apply { postRotate(totalRotation.toFloat()) }
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        } else {
-            bitmap
-        }
-
-        val outputStream = ByteArrayOutputStream()
-        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-        return outputStream.toByteArray()
     }
 }

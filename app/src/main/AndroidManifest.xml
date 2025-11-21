@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
+        android:name=".MyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -47,7 +48,7 @@
             android:label="Privacy Policy" />
         <activity
             android:name=".MacroEditorActivity"
-            android:label="Edit Macros" />
+            android.label="Edit Macros" />
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

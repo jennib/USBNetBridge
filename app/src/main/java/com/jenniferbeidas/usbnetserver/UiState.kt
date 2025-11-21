@@ -8,6 +8,7 @@ data class UiState(
     val cameraStatus: String = "",
     val httpStatus: String = "",
     val tcpProxyStatus: String = "",
+    val webrtcStatus: String = "",
     val serialLog: String = "",
     val hasCameraPermission: Boolean = false,
     val hasAudioPermission: Boolean = false,

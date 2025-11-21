@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Stream</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; }
+        video { background-color: #000; border: 1px solid red; width: 640px; height: 480px; }
+        .status { margin-top: 10px; color: #555; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Stream</h1>
+    
+    <video id="video" autoplay playsinline muted controls></video>
+    <div class="status" id="status">Initializing...</div>
+
+    <script>
+        console.log("--- WebRTC Client Script Starting ---");
+        
+        const video = document.getElementById('video');
+        const statusDiv = document.getElementById('status');
+        let lastVideoTime = -1;
+        let candidateQueue = [];
+        let isRemoteDescriptionSet = false;
+
+        // --- Function to check for frozen video ---
+        function checkVideo() {
+            if (video.readyState < 2) { // Not enough data yet
+                setTimeout(checkVideo, 1000);
+                return;
+            }
+            
+            // If time hasn't advanced in 3 seconds, request a keyframe
+            if (video.currentTime === lastVideoTime) {
+                console.log("CLIENT: Video seems frozen. Requesting Keyframe.");
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'requestKeyFrame' }));
+                }
+            }
+            lastVideoTime = video.currentTime;
+            setTimeout(checkVideo, 3000);
+        }
+
+        // --- HELPER: Force H.264 Selection in SDP ---
+        function forceCodec(sdp, codecName) {
+            const sdpLines = sdp.split('\r\n');
+            let mLineIndex = -1;
+            let codecPayloadType = null;
+
+            // 1. Find the payload type for H264
+            for (let i = 0; i < sdpLines.length; i++) {
+                const line = sdpLines[i];
+                if (line.startsWith('a=rtpmap:') && line.includes(codecName)) {
+                    codecPayloadType = line.split(':')[1].split(' ')[0];
+                    console.log(`CLIENT: Found ${codecName} payload type: ${codecPayloadType}`);
+                    break;
+                }
+            }
+
+            if (!codecPayloadType) return sdp;
+
+            // 2. Move H264 to the front of the video m-line
+            for (let i = 0; i < sdpLines.length; i++) {
+                if (sdpLines[i].startsWith('m=video')) {
+                    mLineIndex = i;
+                    break;
+                }
+            }
+
+            if (mLineIndex !== -1) {
+                const parts = sdpLines[mLineIndex].split(' ');
+                const header = parts.slice(0, 3);
+                let codecs = parts.slice(3);
+                codecs = codecs.filter(c => c !== codecPayloadType);
+                codecs.unshift(codecPayloadType);
+                sdpLines[mLineIndex] = header.concat(codecs).join(' ');
+                console.log("CLIENT: SDP Munged to prefer H.264.");
+            }
+
+            return sdpLines.join('\r\n');
+        }
+
+        // --- WebRTC Setup ---
+        const pc = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // FIX 2: Add Transceiver (RecvOnly)
+        pc.addTransceiver('video', { direction: 'recvonly' });
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                // Note: Sending .toJSON() ensures correct structure
+                ws.send(JSON.stringify({ type: 'iceCandidate', candidate: event.candidate.toJSON() }));
+            }
+        };
+
+        // FIX 3: Handle "Naked Tracks" (Missing Stream ID)
+        pc.ontrack = (event) => {
+            console.log("CLIENT: Received remote track:", event.track.kind);
+            
+            if (event.streams && event.streams[0]) {
+                console.log("CLIENT: Stream found. Attaching.");
+                video.srcObject = event.streams[0];
+            } else {
+                console.log("CLIENT: No stream ID found. Creating new MediaStream from track.");
+                video.srcObject = new MediaStream([event.track]);
+            }
+            
+            // Force play to ensure "muted autoplay" works
+            video.play().catch(e => console.error("Autoplay failed:", e));
+            
+            // Start freeze watchdog
+            setTimeout(checkVideo, 5000);
+        };
+
+        pc.onconnectionstatechange = () => {
+            console.log("Connection State:", pc.connectionState);
+            statusDiv.innerText = "State: " + pc.connectionState;
+        };
+
+        // --- WebSocket Setup ---
+        const ws = new WebSocket(`ws://${window.location.host}/webrtc`);
+
+        ws.onopen = () => { console.log("CLIENT: WebSocket Connected"); };
+        ws.onerror = (error) => { console.error("CLIENT: WebSocket Error", error); };
+
+        ws.onmessage = async (event) => {
+            try {
+                const message = JSON.parse(event.data);
+
+                if (message.type === 'offer') {
+                    console.log("CLIENT: Received Offer.");
+                    
+                    // 1. Mangle SDP to force H.264
+                    const h264Sdp = forceCodec(message.sdp, 'H264');
+                    
+                    await pc.setRemoteDescription(new RTCSessionDescription({
+                        type: 'offer',
+                        sdp: h264Sdp
+                    }));
+                    
+                    isRemoteDescriptionSet = true;
+                    console.log("CLIENT: Remote Description Set.");
+
+                    // 2. Flush Queue
+                    while (candidateQueue.length > 0) {
+                        console.log("CLIENT: Flushing queued candidate.");
+                        await pc.addIceCandidate(candidateQueue.shift());
+                    }
+
+                    // 3. Create & Send Answer
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify(pc.localDescription));
+
+                } else if (message.type === 'iceCandidate') {
+                    // Handle both flattened and nested candidate structures
+                    let candidateData = message.candidate;
+                    
+                    // If the server sends a flat object (candidate, sdpMid, sdpMLineIndex at root)
+                    // check if 'candidateData' is just the string, or the object.
+                    // This logic covers the most common server variations.
+                    if (!candidateData) {
+                         // If message.candidate is undefined, maybe the fields are on 'message' itself
+                         if (message.candidateString || message.sdpMid) {
+                             candidateData = message;
+                         }
+                    }
+                    
+                    // Ensure we have a valid object for RTCIceCandidate
+                    const candidateInit = {
+                        candidate: candidateData.candidate || candidateData, 
+                        sdpMid: candidateData.sdpMid || message.sdpMid,
+                        sdpMLineIndex: candidateData.sdpMLineIndex || message.sdpMLineIndex
+                    };
+
+                    if (!isRemoteDescriptionSet) {
+                        console.log("CLIENT: Queued ICE Candidate.");
+                        candidateQueue.push(new RTCIceCandidate(candidateInit));
+                    } else {
+                        try {
+                            await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
+                            console.log("CLIENT: Added ICE Candidate.");
+                        } catch (e) {
+                            console.error("Error adding ICE:", e);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("CLIENT: Error processing message:", e);
+            }
+        };
+    </script>
+</body>
+</html>
