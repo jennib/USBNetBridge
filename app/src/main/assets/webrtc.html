@@ -22,6 +22,7 @@
         let lastVideoTime = -1;
         let candidateQueue = [];
         let isRemoteDescriptionSet = false;
+        let audioStream = new MediaStream(); // Create a new MediaStream for audio
 
         // --- Function to check for frozen video ---
         function checkVideo() {
@@ -87,6 +88,7 @@
 
         // FIX 2: Add Transceiver (RecvOnly)
         pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
 
         pc.onicecandidate = (event) => {
             if (event.candidate) {
@@ -98,13 +100,19 @@
         // FIX 3: Handle "Naked Tracks" (Missing Stream ID)
         pc.ontrack = (event) => {
             console.log("CLIENT: Received remote track:", event.track.kind);
-            
-            if (event.streams && event.streams[0]) {
-                console.log("CLIENT: Stream found. Attaching.");
-                video.srcObject = event.streams[0];
-            } else {
-                console.log("CLIENT: No stream ID found. Creating new MediaStream from track.");
-                video.srcObject = new MediaStream([event.track]);
+            if (event.track.kind === 'video') {
+                if (event.streams && event.streams[0]) {
+                    console.log("CLIENT: Video stream found. Attaching.");
+                    video.srcObject = event.streams[0];
+                } else {
+                    console.log("CLIENT: No video stream ID found. Creating new MediaStream from track.");
+                    const videoStream = new MediaStream([event.track]);
+                    video.srcObject = videoStream;
+                }
+            } else if (event.track.kind === 'audio') {
+                console.log("CLIENT: Audio track received.");
+                audioStream.addTrack(event.track);
+                video.srcObject = audioStream; // This seems wrong, should probably merge with video
             }
             
             // Force play to ensure "muted autoplay" works

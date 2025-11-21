@@ -79,6 +79,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
     private val videoSource: VideoSource by lazy { peerConnectionFactory.createVideoSource(false) }
     private val videoTrack: VideoTrack by lazy { peerConnectionFactory.createVideoTrack(UUID.randomUUID().toString(), videoSource) }
+    private val audioSource: AudioSource by lazy { peerConnectionFactory.createAudioSource(MediaConstraints()) }
+    private val audioTrack: AudioTrack by lazy { peerConnectionFactory.createAudioTrack(UUID.randomUUID().toString(), audioSource) }
 
     init {
         startUnifiedServer()
@@ -576,6 +578,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
         val peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)
         peerConnection?.addTransceiver(videoTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
+        peerConnection?.addTransceiver(audioTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
         return peerConnection
     }
 
@@ -691,7 +694,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             stream.write((payload.size shr 40) and 0xFF)
             stream.write((payload.size shr 32) and 0xFF)
             stream.write((payload.size shr 24) and 0xFF)
-            stream.write((payload.size shr 16) and 0xFF)
+            stream.write((payload.size shr 16) and                                                                                                                                                                     0xFF)
             stream.write((payload.size shr 8) and 0xFF)
             stream.write(payload.size and 0xFF)
         }
