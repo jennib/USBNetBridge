@@ -288,6 +288,7 @@ class MainActivity : ComponentActivity() {
                              if (uiState.networkStatus.isNotBlank()) Text(text = uiState.networkStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                             if (uiState.webSocketUrl.isNotBlank()) Text(text = uiState.webSocketUrl, color = contentColor, style = MaterialTheme.typography.bodySmall)
                         }
 
                         // Macro Buttons

@@ -254,12 +254,12 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             try {
                 val ipAddress = getLocalIpAddress()
                 if (ipAddress == null) {
-                    _uiState.update { it.copy(cameraStatus = "Camera: Could not get IP address.") }
+                    _uiState.update { it.copy(cameraStatus = "MJPEG Stream: Could not get IP address.") }
                     return@launch
                 }
 
                 cameraServerSocket = ServerSocket(cameraServerPort)
-                _uiState.update { it.copy(cameraStatus = "Camera: $ipAddress:$cameraServerPort") }
+                _uiState.update { it.copy(cameraStatus = "MJPEG Stream: $ipAddress:$cameraServerPort") }
 
                 while (true) {
                     val clientSocket = cameraServerSocket!!.accept()
@@ -323,7 +323,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
                 _uiState.update {
                     it.copy(
-                        networkStatus = "http://$ipAddress:$unifiedPort"
+                        networkStatus = "Web Interface: http://$ipAddress:$unifiedPort",
+                        webSocketUrl = "WebRTC URL: ws://$ipAddress:$unifiedPort/webrtc"
                     )
                 }
 
@@ -344,12 +345,12 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             try {
                 val ipAddress = getLocalIpAddress()
                 if (ipAddress == null) {
-                    updateStatusMessage("TCP: Could not get IP.")
+                    updateStatusMessage("TCP Proxy: Could not get IP.")
                     return@launch
                 }
 
                 tcpProxyServer = ServerSocket(tcpProxyPort)
-                _uiState.update { it.copy(tcpProxyStatus = "$ipAddress:$tcpProxyPort") }
+                _uiState.update { it.copy(tcpProxyStatus = "TCP Proxy: $ipAddress:$tcpProxyPort") }
 
                 while (true) {
                     val client = tcpProxyServer!!.accept()
