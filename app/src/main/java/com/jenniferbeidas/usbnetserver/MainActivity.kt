@@ -9,7 +9,6 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -18,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -58,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
@@ -80,6 +79,7 @@ class MainActivity : ComponentActivity() {
 
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
+    @OptIn(ExperimentalGetImage::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -181,11 +181,7 @@ class MainActivity : ComponentActivity() {
     private fun findAndConnectDevice(device: UsbDevice) {
         val usbManager = getSystemService(USB_SERVICE) as UsbManager
         if (!usbManager.hasPermission(device)) {
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                PendingIntent.FLAG_IMMUTABLE
-            } else {
-                0
-            }
+            val flags = PendingIntent.FLAG_IMMUTABLE
             val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), flags)
             usbManager.requestPermission(device, permissionIntent)
         } else {
@@ -331,6 +327,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @ExperimentalGetImage
     @Composable
     fun CameraPreview(viewModel: MainViewModel, rotation: Int) {
         val lifecycleOwner = LocalLifecycleOwner.current
