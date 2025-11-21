@@ -19,6 +19,35 @@
             margin: 20px auto;
             background-color: #f5f5f5;
         }
+        #macro-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            width: 80%;
+            margin: 20px auto;
+        }
+        .macro-button {
+            padding: 10px 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #eee;
+            cursor: pointer;
+        }
+        #command-input {
+            width: 60%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        #send-button {
+            padding: 10px 15px;
+            border-radius: 5px;
+            border: none;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -33,12 +62,31 @@
     <h2>Serial Output</h2>
     <div id="serial-output"></div>
 
+    <h2>Send Command</h2>
+    <div>
+        <input type="text" id="command-input" placeholder="Enter serial command">
+        <button id="send-button" onclick="sendSerialCommand()">Send</button>
+    </div>
+
+    <h2>Macros</h2>
+    <div id="macro-buttons"></div>
+    <button onclick="editMacros()">Edit Macros</button>
+
     <script>
         console.log("--- WebRTC Client Script Starting ---");
         
         const video = document.getElementById('video');
         const statusDiv = document.getElementById('status');
         const serialOutput = document.getElementById('serial-output');
+        const macroButtons = document.getElementById('macro-buttons');
+        const commandInput = document.getElementById('command-input');
+
+        commandInput.addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                sendSerialCommand();
+            }
+        });
+        
         let lastVideoTime = -1;
         let candidateQueue = [];
         let isRemoteDescriptionSet = false;
@@ -50,9 +98,8 @@
             serialOutput.scrollTop = serialOutput.scrollHeight;
         }
 
-        // --- Function to check for frozen video ---
         function checkVideo() {
-            if (video.readyState < 2) { // Not enough data yet
+            if (video.readyState < 2) {
                 setTimeout(checkVideo, 1000);
                 return;
             }
@@ -67,7 +114,6 @@
             setTimeout(checkVideo, 3000);
         }
 
-        // --- WebRTC Setup ---
         const pc = new RTCPeerConnection({
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         });
@@ -104,10 +150,13 @@
             statusDiv.innerText = `State: ${pc.connectionState} @ ${ipAddress}`;
         };
 
-        // --- WebSocket Setup ---
         const ws = new WebSocket(`ws://${window.location.host}/webrtc`);
 
-        ws.onopen = () => { console.log("CLIENT: WebSocket Connected"); };
+        ws.onopen = () => {
+            console.log("CLIENT: WebSocket Connected");
+            ws.send(JSON.stringify({ type: 'getMacros' }));
+        };
+
         ws.onerror = (error) => { console.error("CLIENT: WebSocket Error", error); };
 
         ws.onmessage = async (event) => {
@@ -116,12 +165,7 @@
 
                 if (message.type === 'offer') {
                     console.log("CLIENT: Received Offer.");
-                    
-                    await pc.setRemoteDescription(new RTCSessionDescription({
-                        type: 'offer',
-                        sdp: message.sdp
-                    }));
-                    
+                    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: message.sdp }));
                     isRemoteDescriptionSet = true;
                     console.log("CLIENT: Remote Description Set.");
 
@@ -135,34 +179,22 @@
                     ws.send(JSON.stringify(pc.localDescription));
 
                 } else if (message.type === 'iceCandidate') {
-                    let candidateData = message.candidate;
-                    
-                    if (!candidateData) {
-                         if (message.candidateString || message.sdpMid) {
-                             candidateData = message;
-                         }
-                    }
-                    
                     const candidateInit = {
-                        candidate: candidateData.candidate || candidateData, 
-                        sdpMid: candidateData.sdpMid || message.sdpMid,
-                        sdpMLineIndex: candidateData.sdpMLineIndex || message.sdpMLineIndex
+                        candidate: message.candidate.candidate,
+                        sdpMid: message.candidate.sdpMid,
+                        sdpMLineIndex: message.candidate.sdpMLineIndex
                     };
 
                     if (!isRemoteDescriptionSet) {
                         console.log("CLIENT: Queued ICE Candidate.");
                         candidateQueue.push(new RTCIceCandidate(candidateInit));
                     } else {
-                        try {
-                            await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
-                            console.log("CLIENT: Added ICE Candidate.");
-                        } catch (e) {
-                            console.error("Error adding ICE:", e);
-                        }
+                        await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
                     }
+                } else if (message.type === 'macros') {
+                    populateMacroButtons(JSON.parse(message.data));
                 }
             } catch (e) {
-                 //This is not a JSON message, so it's probably serial data
                  const reader = new FileReader();
                  reader.onload = function() {
                      logSerial(reader.result);
@@ -170,6 +202,36 @@
                  reader.readAsText(event.data);
             }
         };
+
+        function populateMacroButtons(macros) {
+            macroButtons.innerHTML = '';
+            macros.forEach(macro => {
+                const button = document.createElement('button');
+                button.className = 'macro-button';
+                button.textContent = macro.name;
+                if (macro.colorHex) {
+                    button.style.backgroundColor = macro.colorHex;
+                }
+                button.onclick = () => sendStringCommand(macro.command);
+                macroButtons.appendChild(button);
+            });
+        }
+
+        function sendStringCommand(command) {
+            ws.send(JSON.stringify({ type: 'sendSerial', command: command }));
+        }
+
+        function sendSerialCommand() {
+            const command = commandInput.value;
+            if (command) {
+                sendStringCommand(command);
+                commandInput.value = '';
+            }
+        }
+
+        function editMacros() {
+            window.open('/macro-editor', '_blank');
+        }
     </script>
 </body>
 </html>

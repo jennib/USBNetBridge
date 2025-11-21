@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
 
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
-    @OptIn(ExperimentalGetImage::class)
+    @ExperimentalGetImage
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -189,6 +189,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @ExperimentalGetImage
     @Composable
     fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit) {
         val context = LocalContext.current
@@ -312,7 +313,7 @@ class MainActivity : ComponentActivity() {
                                         MaterialTheme.colorScheme.primary
                                     }
                                     Button(
-                                        onClick = { viewModel.sendMacroCommand(macro.command) },
+                                        onClick = { viewModel.sendStringCommand(macro.command) },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
                                     ) {

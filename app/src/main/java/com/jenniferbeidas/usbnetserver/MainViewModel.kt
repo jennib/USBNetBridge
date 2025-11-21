@@ -2,6 +2,7 @@ package com.jenniferbeidas.usbnetserver
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.ImageFormat
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -123,7 +124,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         }
     }
 
-    fun sendMacroCommand(command: String) {
+    fun sendStringCommand(command: String) {
         val data = if (command.startsWith("0x")) {
             command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         } else {
@@ -420,6 +421,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             } else {
                 try {
                     when (path) {
+                        "/macro-editor" -> serveFile(client.getOutputStream(), "macro_editor.html")
                         "/index.html" -> {
                             val htmlFile = if (_uiState.value.isConnected) "index.html" else "no_device.html"
                             serveFile(client.getOutputStream(), htmlFile)
@@ -555,26 +557,50 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                 val payload = readWsFrame(`in`) ?: break
                 val message = JSONObject(String(payload))
 
-                if (message.has("type") && message.getString("type") == "answer") {
-                    val sdp = message.getString("sdp")
-                    val answer = SessionDescription(SessionDescription.Type.ANSWER, sdp)
-                    peerConnection.setRemoteDescription(object : SdpObserver {
-                        override fun onCreateSuccess(p0: SessionDescription?) {}
-                        override fun onSetSuccess() {}
-                        override fun onCreateFailure(p0: String?) {}
-                        override fun onSetFailure(p0: String?) {}
-                    }, answer)
-                } else if (message.has("type") && message.getString("type") == "iceCandidate") {
-                    val candidate = message.getJSONObject("candidate")
-                    val iceCandidate = IceCandidate(
-                        candidate.getString("sdpMid"),
-                        candidate.getInt("sdpMLineIndex"),
-                        candidate.getString("candidate")
-                    )
-                    peerConnection.addIceCandidate(iceCandidate)
-                } else if (message.has("type") && message.getString("type") == "requestKeyFrame") {
-                    Log.d(tag, "Keyframe requested by remote")
-                    videoSource.capturerObserver.onCapturerStarted(true)
+                when (message.optString("type")) {
+                    "answer" -> {
+                        val sdp = message.getString("sdp")
+                        val answer = SessionDescription(SessionDescription.Type.ANSWER, sdp)
+                        peerConnection.setRemoteDescription(object : SdpObserver {
+                            override fun onCreateSuccess(p0: SessionDescription?) {}
+                            override fun onSetSuccess() {}
+                            override fun onCreateFailure(p0: String?) {}
+                            override fun onSetFailure(p0: String?) {}
+                        }, answer)
+                    }
+                    "iceCandidate" -> {
+                        val candidate = message.getJSONObject("candidate")
+                        val iceCandidate = IceCandidate(
+                            candidate.getString("sdpMid"),
+                            candidate.getInt("sdpMLineIndex"),
+                            candidate.getString("candidate")
+                        )
+                        peerConnection.addIceCandidate(iceCandidate)
+                    }
+                    "requestKeyFrame" -> {
+                        Log.d(tag, "Keyframe requested by remote")
+                        videoSource.capturerObserver.onCapturerStarted(true)
+                    }
+                    "getMacros" -> {
+                        val macros = _uiState.value.macros
+                        val macrosJson = gson.toJson(macros)
+                        val responseMsg = JSONObject().apply {
+                            put("type", "macros")
+                            put("data", macrosJson)
+                        }
+                        writeWsFrame(client.getOutputStream(), responseMsg.toString().toByteArray(), 1)
+                    }
+                    "sendSerial" -> {
+                        val command = message.getString("command")
+                        sendStringCommand(command)
+                    }
+                    "saveMacros" -> {
+                        val macrosJson = message.getString("data")
+                        val type = object : TypeToken<List<Macro>>() {}.type
+                        val macros = gson.fromJson<List<Macro>>(macrosJson, type)
+                        saveMacros(macros)
+                        writeWsFrame(client.getOutputStream(), "{\"type\":\"macrosSaved\"}".toByteArray(), 1)
+                    }
                 }
             }
         } catch (e: Exception) {
