@@ -45,9 +45,10 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         application,
         usbManager,
         onDataReceived = { data ->
-            appendToSerialLog(data)
-            writeToWebsocket(data)
-            writeToTcp(data)
+            val inboundData = "IN: ".toByteArray() + data
+            appendToSerialLog(inboundData)
+            writeToWebsocket(inboundData)
+            writeToTcp(inboundData)
         },
         onStatusUpdate = { message -> updateStatusMessage(message) }
     )
@@ -123,15 +124,15 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     }
 
     fun sendMacroCommand(command: String) {
-        if (command.startsWith("0x")) {
-            val hexData = command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            appendToSerialLog(hexData)
-            serialConnectionManager.write(hexData)
+        val data = if (command.startsWith("0x")) {
+            command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         } else {
-            val data = command.replace("\\n", "\n").replace("\\r", "\r").toByteArray()
-            appendToSerialLog(data)
-            serialConnectionManager.write(data)
+            command.replace("\\n", "\n").replace("\\r", "\r").toByteArray()
         }
+        val outboundData = "OUT: ".toByteArray() + data
+        appendToSerialLog(outboundData)
+        serialConnectionManager.write(data)
+        writeToWebsocket(outboundData)
     }
 
     fun loadMacros() {
@@ -321,9 +322,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
                 _uiState.update {
                     it.copy(
-                        networkStatus = "1. Visit: http://$ipAddress:$unifiedPort",
-                        httpStatus = "2. JS to: ws://$ipAddress:$unifiedPort",
-                        webrtcStatus = "3. WebRTC: http://$ipAddress:$unifiedPort/webrtc.html"
+                        networkStatus = "http://$ipAddress:$unifiedPort"
                     )
                 }
 
@@ -349,7 +348,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                 }
 
                 tcpProxyServer = ServerSocket(tcpProxyPort)
-                _uiState.update { it.copy(tcpProxyStatus = "TCP Proxy: $ipAddress:$tcpProxyPort") }
+                _uiState.update { it.copy(tcpProxyStatus = "$ipAddress:$tcpProxyPort") }
 
                 while (true) {
                     val client = tcpProxyServer!!.accept()
@@ -362,7 +361,9 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                                 val bytesRead = client.getInputStream().read(buffer)
                                 if (bytesRead == -1) break
                                 val data = buffer.copyOf(bytesRead)
-                                appendToSerialLog(data)
+                                val outboundData = "OUT: ".toByteArray() + data
+                                appendToSerialLog(outboundData)
+                                writeToWebsocket(outboundData)
                                 serialConnectionManager.write(data)
                             }
                         } catch (e: IOException) {
@@ -413,16 +414,17 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             if (headers["upgrade"]?.equals("websocket", ignoreCase = true) == true) {
                 when (path) {
                     "/webrtc" -> handleWebRTCConnection(client, headers)
+                    "/serial" -> handleSerialWebSocketConnection(client, headers)
                     else -> handleWebSocketConnection(client, headers)
                 }
             } else {
                 try {
                     when (path) {
-                        "/webrtc.html" -> serveFile(client.getOutputStream(), "webrtc.html")
-                        else -> {
+                        "/index.html" -> {
                             val htmlFile = if (_uiState.value.isConnected) "index.html" else "no_device.html"
                             serveFile(client.getOutputStream(), htmlFile)
                         }
+                        else -> serveFile(client.getOutputStream(), "webrtc.html")
                     }
                 } finally {
                     client.close()
@@ -456,11 +458,45 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
             while (client.isConnected) {
                 val payload = readWsFrame(client.getInputStream()) ?: break
-                appendToSerialLog(payload)
+                val outboundData = "OUT: ".toByteArray() + payload
+                appendToSerialLog(outboundData)
+                writeToWebsocket(outboundData)
                 serialConnectionManager.write(payload)
             }
         } catch (e: Exception) {
             Log.e(tag, "Error in websocket connection", e)
+        } finally {
+            synchronized(webSocketClients) { webSocketClients.remove(client) }
+            client.close()
+        }
+    }
+
+    private suspend fun handleSerialWebSocketConnection(client: Socket, headers: Map<String, String>) {
+        try {
+            val out = client.getOutputStream()
+            val key = headers["sec-websocket-key"]
+            if (key == null) {
+                client.close()
+                return
+            }
+
+            val response = "HTTP/1.1 101 Switching Protocols\r\n" +
+                    "Connection: Upgrade\r\n" +
+                    "Upgrade: websocket\r\n" +
+                    "Sec-WebSocket-Accept: " +
+                    Base64.encodeToString(MessageDigest.getInstance("SHA-1").digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray()), Base64.NO_WRAP) +
+                    "\r\n\r\n"
+            out.write(response.toByteArray())
+            out.flush()
+
+            synchronized(webSocketClients) { webSocketClients.add(client) }
+
+            // Keep the connection alive, but we don't expect any messages from the client
+            while (client.isConnected) {
+                kotlinx.coroutines.delay(1000)
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Error in serial websocket connection", e)
         } finally {
             synchronized(webSocketClients) { webSocketClients.remove(client) }
             client.close()
@@ -486,6 +522,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                     "\r\n\r\n"
             out.write(response.toByteArray())
             out.flush()
+
+            synchronized(webSocketClients) { webSocketClients.add(client) }
 
             peerConnection = createPeerConnection(client) ?: return
 
@@ -544,6 +582,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         } finally {
             peerConnection?.dispose()
             stopWebRtc()
+            synchronized(webSocketClients) { webSocketClients.remove(client) }
             client.close()
         }
     }
@@ -588,7 +627,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             val content = application.assets.open(fileName).bufferedReader().use { it.readText() }
             val response = "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: $contentType\r\n" +
-                    "Content-Length: ${content.length}\r\n" +
+                    "Content-Length: ${content.toByteArray().size}\r\n" +
                     "Connection: close\r\n\r\n" + content
             out.write(response.toByteArray())
             out.flush()
@@ -694,7 +733,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             stream.write((payload.size shr 40) and 0xFF)
             stream.write((payload.size shr 32) and 0xFF)
             stream.write((payload.size shr 24) and 0xFF)
-            stream.write((payload.size shr 16) and                                                                                                                                                                     0xFF)
+            stream.write((payload.size shr 16) and 0xFF)
             stream.write((payload.size shr 8) and 0xFF)
             stream.write(payload.size and 0xFF)
         }
@@ -714,7 +753,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     }
 
     fun onUsbDeviceDetached() {
-        _uiState.update { it.copy(statusMessage = "USB device detached. Please connect a device.", networkStatus = "", httpStatus = "", tcpProxyStatus = "", webrtcStatus = "") }
+        _uiState.update { it.copy(statusMessage = "USB device detached. Please connect a device.", networkStatus = "", tcpProxyStatus = "") }
     }
 
     fun setCameraPermission(granted: Boolean) {
@@ -735,11 +774,11 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         val prefs = application.getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
         val displayMode = prefs.getString("display_mode", "Raw")
         val newLog = if (displayMode == "Hex") {
-            _uiState.value.serialLog + data.toHexString()
+             data.toHexString()
         } else {
-            _uiState.value.serialLog + String(data)
+             String(data)
         }
-        _uiState.update { it.copy(serialLog = newLog.takeLast(4000)) }
+        _uiState.update { it.copy(serialLog = _uiState.value.serialLog + newLog) }
     }
 
     private fun getLocalIpAddress(): String? {

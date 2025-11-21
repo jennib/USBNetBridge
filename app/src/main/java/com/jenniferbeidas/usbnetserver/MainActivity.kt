@@ -58,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
@@ -289,9 +290,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                              if (uiState.networkStatus.isNotBlank()) Text(text = uiState.networkStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
-                             if (uiState.httpStatus.isNotBlank()) Text(text = uiState.httpStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
-                             if (uiState.webrtcStatus.isNotBlank()) Text(text = uiState.webrtcStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                         }
 
                         // Macro Buttons

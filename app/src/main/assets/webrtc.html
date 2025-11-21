@@ -1,27 +1,54 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <title>WebRTC Stream</title>
+    <title>USB Net Bridge</title>
     <style>
         body { font-family: sans-serif; text-align: center; }
+        .header { display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+        .header img { width: 40px; height: 40px; margin-right: 10px; }
+        .header h1 { font-size: 1.5em; margin: 0; }
         video { background-color: #000; border: 1px solid red; width: 640px; height: 480px; }
         .status { margin-top: 10px; color: #555; font-size: 0.9em; }
+        #serial-output {
+            width: 80%;
+            height: 200px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            overflow-y: scroll;
+            text-align: left;
+            margin: 20px auto;
+            background-color: #f5f5f5;
+        }
     </style>
 </head>
 <body>
-    <h1>WebRTC Stream</h1>
+    <div class="header">
+        <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" alt="App Logo">
+        <h1>USB Net Bridge</h1>
+    </div>
     
     <video id="video" autoplay playsinline muted controls></video>
     <div class="status" id="status">Initializing...</div>
+
+    <h2>Serial Output</h2>
+    <div id="serial-output"></div>
 
     <script>
         console.log("--- WebRTC Client Script Starting ---");
         
         const video = document.getElementById('video');
         const statusDiv = document.getElementById('status');
+        const serialOutput = document.getElementById('serial-output');
         let lastVideoTime = -1;
         let candidateQueue = [];
         let isRemoteDescriptionSet = false;
+
+        function logSerial(message) {
+            const newContent = document.createElement('div');
+            newContent.textContent = message;
+            serialOutput.appendChild(newContent);
+            serialOutput.scrollTop = serialOutput.scrollHeight;
+        }
 
         // --- Function to check for frozen video ---
         function checkVideo() {
@@ -30,7 +57,6 @@
                 return;
             }
             
-            // If time hasn't advanced in 3 seconds, request a keyframe
             if (video.currentTime === lastVideoTime) {
                 console.log("CLIENT: Video seems frozen. Requesting Keyframe.");
                 if (ws.readyState === WebSocket.OPEN) {
@@ -41,57 +67,16 @@
             setTimeout(checkVideo, 3000);
         }
 
-        // --- HELPER: Force H.264 Selection in SDP ---
-        function forceCodec(sdp, codecName) {
-            const sdpLines = sdp.split('\r\n');
-            let mLineIndex = -1;
-            let codecPayloadType = null;
-
-            // 1. Find the payload type for H264
-            for (let i = 0; i < sdpLines.length; i++) {
-                const line = sdpLines[i];
-                if (line.startsWith('a=rtpmap:') && line.includes(codecName)) {
-                    codecPayloadType = line.split(':')[1].split(' ')[0];
-                    console.log(`CLIENT: Found ${codecName} payload type: ${codecPayloadType}`);
-                    break;
-                }
-            }
-
-            if (!codecPayloadType) return sdp;
-
-            // 2. Move H264 to the front of the video m-line
-            for (let i = 0; i < sdpLines.length; i++) {
-                if (sdpLines[i].startsWith('m=video')) {
-                    mLineIndex = i;
-                    break;
-                }
-            }
-
-            if (mLineIndex !== -1) {
-                const parts = sdpLines[mLineIndex].split(' ');
-                const header = parts.slice(0, 3);
-                let codecs = parts.slice(3);
-                codecs = codecs.filter(c => c !== codecPayloadType);
-                codecs.unshift(codecPayloadType);
-                sdpLines[mLineIndex] = header.concat(codecs).join(' ');
-                console.log("CLIENT: SDP Munged to prefer H.264.");
-            }
-
-            return sdpLines.join('\r\n');
-        }
-
         // --- WebRTC Setup ---
         const pc = new RTCPeerConnection({
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         });
 
-        // FIX 2: Add Transceiver (RecvOnly)
         pc.addTransceiver('video', { direction: 'recvonly' });
         pc.addTransceiver('audio', { direction: 'recvonly' });
 
         pc.onicecandidate = (event) => {
             if (event.candidate) {
-                // Note: Sending .toJSON() ensures correct structure
                 ws.send(JSON.stringify({ type: 'iceCandidate', candidate: event.candidate.toJSON() }));
             }
         };
@@ -99,7 +84,6 @@
         pc.ontrack = (event) => {
             console.log("CLIENT: Received remote track:", event.track.kind);
 
-            // Use a single stream for both audio and video.
             let stream = video.srcObject;
             if (!stream) {
                 stream = new MediaStream();
@@ -107,19 +91,17 @@
             }
             stream.addTrack(event.track);
 
-            // Muted autoplay should now work more reliably.
-            // The 'muted' attribute on the <video> tag is important.
             video.play().catch(e => console.error("Autoplay failed:", e));
             
-            // Start freeze watchdog only after the video track is received
             if (event.track.kind === 'video') {
                  setTimeout(checkVideo, 5000);
             }
         };
 
         pc.onconnectionstatechange = () => {
+            const ipAddress = window.location.hostname;
             console.log("Connection State:", pc.connectionState);
-            statusDiv.innerText = "State: " + pc.connectionState;
+            statusDiv.innerText = `State: ${pc.connectionState} @ ${ipAddress}`;
         };
 
         // --- WebSocket Setup ---
@@ -135,43 +117,32 @@
                 if (message.type === 'offer') {
                     console.log("CLIENT: Received Offer.");
                     
-                    // 1. Mangle SDP to force H.264
-                    const h264Sdp = forceCodec(message.sdp, 'H264');
-                    
                     await pc.setRemoteDescription(new RTCSessionDescription({
                         type: 'offer',
-                        sdp: h264Sdp
+                        sdp: message.sdp
                     }));
                     
                     isRemoteDescriptionSet = true;
                     console.log("CLIENT: Remote Description Set.");
 
-                    // 2. Flush Queue
                     while (candidateQueue.length > 0) {
                         console.log("CLIENT: Flushing queued candidate.");
                         await pc.addIceCandidate(candidateQueue.shift());
                     }
 
-                    // 3. Create & Send Answer
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
                     ws.send(JSON.stringify(pc.localDescription));
 
                 } else if (message.type === 'iceCandidate') {
-                    // Handle both flattened and nested candidate structures
                     let candidateData = message.candidate;
                     
-                    // If the server sends a flat object (candidate, sdpMid, sdpMLineIndex at root)
-                    // check if 'candidateData' is just the string, or the object.
-                    // This logic covers the most common server variations.
                     if (!candidateData) {
-                         // If message.candidate is undefined, maybe the fields are on 'message' itself
                          if (message.candidateString || message.sdpMid) {
                              candidateData = message;
                          }
                     }
                     
-                    // Ensure we have a valid object for RTCIceCandidate
                     const candidateInit = {
                         candidate: candidateData.candidate || candidateData, 
                         sdpMid: candidateData.sdpMid || message.sdpMid,
@@ -191,7 +162,12 @@
                     }
                 }
             } catch (e) {
-                console.error("CLIENT: Error processing message:", e);
+                 //This is not a JSON message, so it's probably serial data
+                 const reader = new FileReader();
+                 reader.onload = function() {
+                     logSerial(reader.result);
+                 };
+                 reader.readAsText(event.data);
             }
         };
     </script>
