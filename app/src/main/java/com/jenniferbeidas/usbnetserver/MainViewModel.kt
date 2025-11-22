@@ -435,8 +435,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             if (headers["upgrade"]?.equals("websocket", ignoreCase = true) == true) {
                 when (path) {
                     "/webrtc" -> handleWebRTCConnection(client, headers)
-                    "/serial" -> handleSerialWebSocketConnection(client, headers)
-                    else -> handleWebSocketConnection(client, headers)
+                    else -> handleSerialWebSocketConnection(client, headers)
                 }
             } else {
                 try {
@@ -455,41 +454,6 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         } catch (e: Exception) {
             Log.e(tag, "Error handling client connection", e)
             try { client.close() } catch (ioe: IOException) { /* ignore */ }
-        }
-    }
-
-    private suspend fun handleWebSocketConnection(client: Socket, headers: Map<String, String>) {
-        try {
-            val out = client.getOutputStream()
-            val key = headers["sec-websocket-key"]
-            if (key == null || !_uiState.value.isConnected) {
-                client.close()
-                return
-            }
-
-            val response = "HTTP/1.1 101 Switching Protocols\r\n" +
-                    "Connection: Upgrade\r\n" +
-                    "Upgrade: websocket\r\n" +
-                    "Sec-WebSocket-Accept: " +
-                    Base64.encodeToString(MessageDigest.getInstance("SHA-1").digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray()), Base64.NO_WRAP) +
-                    "\r\n\r\n"
-            out.write(response.toByteArray())
-            out.flush()
-
-            synchronized(webSocketClients) { webSocketClients.add(client) }
-
-            while (client.isConnected) {
-                val payload = readWsFrame(client.getInputStream()) ?: break
-                val outboundData = "OUT: ".toByteArray() + payload
-                appendToSerialLog(outboundData)
-                writeToWebsocket(outboundData)
-                serialConnectionManager.write(payload)
-            }
-        } catch (e: Exception) {
-            Log.e(tag, "Error in websocket connection", e)
-        } finally {
-            synchronized(webSocketClients) { webSocketClients.remove(client) }
-            client.close()
         }
     }
 
@@ -544,6 +508,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                     "\r\n\r\n"
             out.write(response.toByteArray())
             out.flush()
+
+            synchronized(webSocketClients) { webSocketClients.add(client) }
 
             val rtcConfig = PeerConnection.RTCConfiguration(emptyList())
             val observer = object : PeerConnection.Observer {
@@ -671,6 +637,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             peerConnection?.dispose()
             stopWebRtc()
             iceCandidateBuffer.clear()
+            synchronized(webSocketClients) { webSocketClients.remove(client) }
             client.close()
         }
     }
