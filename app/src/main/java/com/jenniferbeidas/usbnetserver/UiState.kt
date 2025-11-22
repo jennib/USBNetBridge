@@ -14,5 +14,6 @@ data class UiState(
     val isCameraReady: Boolean = false,
     val macros: List<Macro> = emptyList(),
     val discoveredDevice: UsbDevice? = null,
-    val isConnected: Boolean = false
+    val isConnected: Boolean = false,
+    val permissionRequestDevice: UsbDevice? = null
 )

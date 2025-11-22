@@ -2,7 +2,6 @@ package com.jenniferbeidas.usbnetserver
 
 import android.app.Application
 import android.content.Context
-import android.content.Intent
 import android.graphics.ImageFormat
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -30,7 +29,7 @@ import java.net.Inet4Address
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.TimeUnit
 
 
@@ -67,6 +66,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     private var tcpProxyServer: ServerSocket? = null
     private val tcpProxyPort = 8889
     private val tcpProxyClients = mutableListOf<Socket>()
+
+    private val iceCandidateBuffer = Collections.synchronizedList(mutableListOf<IceCandidate>())
 
     private val gson = Gson()
     private val eglBase = EglBase.create()
@@ -117,23 +118,39 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     fun connectToFirstAvailableDevice() {
         viewModelScope.launch(Dispatchers.IO) {
             if (_uiState.value.isConnected) return@launch
+
             val deviceList = usbManager.deviceList
-            deviceList.values.firstOrNull { usbManager.hasPermission(it) }?.let {
-                connectToDevice(it)
+            val supportedDevice = deviceList.values.firstOrNull { serialConnectionManager.isSerialDevice(it) }
+
+            if (supportedDevice == null) {
+                updateStatusMessage("Please connect a USB serial device.")
+                return@launch
+            }
+
+            if (usbManager.hasPermission(supportedDevice)) {
+                connectToDevice(supportedDevice)
+            } else {
+                _uiState.update { it.copy(permissionRequestDevice = supportedDevice) }
             }
         }
     }
 
+    fun permissionRequestCompleted() {
+        _uiState.update { it.copy(permissionRequestDevice = null) }
+    }
+
     fun sendStringCommand(command: String) {
-        val data = if (command.startsWith("0x")) {
-            command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        } else {
-            command.replace("\\n", "\n").replace("\\r", "\r").toByteArray()
+        viewModelScope.launch(Dispatchers.IO) {
+            val data = if (command.startsWith("0x")) {
+                command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            } else {
+                command.replace("\\n", "\n").replace("\\r", "\r").toByteArray()
+            }
+            val outboundData = "OUT: ".toByteArray() + data
+            appendToSerialLog(outboundData)
+            serialConnectionManager.write(data)
+            writeToWebsocket(outboundData)
         }
-        val outboundData = "OUT: ".toByteArray() + data
-        appendToSerialLog(outboundData)
-        serialConnectionManager.write(data)
-        writeToWebsocket(outboundData)
     }
 
     fun loadMacros() {
@@ -228,9 +245,11 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                 }
             }
         } else { // Case for I420 (planar)
-            YuvHelper.I420Copy(yData, yStride, uData, uStride, vData, vStride,
+            YuvHelper.I420Copy(
+                yData, yStride, uData, uStride, vData, vStride,
                 i420Buffer.dataY, i420Buffer.strideY, i420Buffer.dataU, i420Buffer.strideU, i420Buffer.dataV, i420Buffer.strideV,
-                width, height)
+                width, height
+            )
         }
 
         return i420Buffer
@@ -526,13 +545,34 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             out.write(response.toByteArray())
             out.flush()
 
-            synchronized(webSocketClients) { webSocketClients.add(client) }
+            val rtcConfig = PeerConnection.RTCConfiguration(emptyList())
+            val observer = object : PeerConnection.Observer {
+                override fun onIceCandidate(candidate: IceCandidate?) {
+                    candidate?.let {
+                        synchronized(iceCandidateBuffer) {
+                            iceCandidateBuffer.add(it)
+                        }
+                    }
+                }
+                override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
+                override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
+                override fun onIceConnectionReceivingChange(p0: Boolean) {}
+                override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
+                override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
+                override fun onAddStream(p0: MediaStream?) {}
+                override fun onRemoveStream(p0: MediaStream?) {}
+                override fun onDataChannel(p0: DataChannel?) {}
+                override fun onRenegotiationNeeded() {}
+                override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
+            }
 
-            peerConnection = createPeerConnection(client) ?: return
+            peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)
+            peerConnection?.addTransceiver(videoTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
+            peerConnection?.addTransceiver(audioTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
 
             startWebRtc()
 
-            peerConnection.createOffer(object : SdpObserver {
+            peerConnection?.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(offer: SessionDescription?) {
                     peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onCreateSuccess(p0: SessionDescription?) {}
@@ -544,14 +584,14 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                             writeWsFrame(out, offerJson.toString().toByteArray(), 1)
                         }
 
-                        override fun onCreateFailure(p0: String?) {}
-                        override fun onSetFailure(p0: String?) {}
+                        override fun onCreateFailure(p0: String?) { Log.e(tag, "setLocalDescription onCreateFailure: $p0") }
+                        override fun onSetFailure(p0: String?) { Log.e(tag, "setLocalDescription onSetFailure: $p0") }
                     }, offer)
                 }
 
                 override fun onSetSuccess() {}
-                override fun onCreateFailure(p0: String?) {}
-                override fun onSetFailure(p0: String?) {}
+                override fun onCreateFailure(p0: String?) { Log.e(tag, "createOffer onCreateFailure: $p0") }
+                override fun onSetFailure(p0: String?) { Log.e(tag, "createOffer onSetFailure: $p0") }
             }, MediaConstraints())
 
             while (client.isConnected) {
@@ -562,11 +602,32 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                     "answer" -> {
                         val sdp = message.getString("sdp")
                         val answer = SessionDescription(SessionDescription.Type.ANSWER, sdp)
-                        peerConnection.setRemoteDescription(object : SdpObserver {
+                        peerConnection?.setRemoteDescription(object : SdpObserver {
                             override fun onCreateSuccess(p0: SessionDescription?) {}
-                            override fun onSetSuccess() {}
-                            override fun onCreateFailure(p0: String?) {}
-                            override fun onSetFailure(p0: String?) {}
+                            override fun onSetSuccess() {
+                                Log.d(tag, "Remote description set, draining ${iceCandidateBuffer.size} ICE candidates.")
+                                synchronized(iceCandidateBuffer) {
+                                    iceCandidateBuffer.forEach { candidate ->
+                                        try {
+                                            val candidateJson = JSONObject().apply {
+                                                put("candidate", candidate.sdp)
+                                                put("sdpMid", candidate.sdpMid)
+                                                put("sdpMLineIndex", candidate.sdpMLineIndex)
+                                            }
+                                            val iceMessage = JSONObject().apply {
+                                                put("type", "iceCandidate")
+                                                put("candidate", candidateJson)
+                                            }
+                                            writeWsFrame(out, iceMessage.toString().toByteArray(), 1)
+                                        } catch (e: IOException) {
+                                            Log.e(tag, "Failed to send buffered ICE candidate", e)
+                                        }
+                                    }
+                                    iceCandidateBuffer.clear()
+                                }
+                            }
+                            override fun onCreateFailure(p0: String?) { Log.e(tag, "setRemoteDescription onCreateFailure: $p0") }
+                            override fun onSetFailure(p0: String?) { Log.e(tag, "setRemoteDescription onSetFailure: $p0") }
                         }, answer)
                     }
                     "iceCandidate" -> {
@@ -576,7 +637,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                             candidate.getInt("sdpMLineIndex"),
                             candidate.getString("candidate")
                         )
-                        peerConnection.addIceCandidate(iceCandidate)
+                        peerConnection?.addIceCandidate(iceCandidate)
                     }
                     "requestKeyFrame" -> {
                         Log.d(tag, "Keyframe requested by remote")
@@ -609,43 +670,9 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         } finally {
             peerConnection?.dispose()
             stopWebRtc()
-            synchronized(webSocketClients) { webSocketClients.remove(client) }
+            iceCandidateBuffer.clear()
             client.close()
         }
-    }
-
-    private fun createPeerConnection(client: Socket): PeerConnection? {
-        val rtcConfig = PeerConnection.RTCConfiguration(emptyList())
-        val observer = object : RtpAdapter() {
-            override fun onIceCandidate(candidate: IceCandidate?) {
-                candidate?.let {
-                    try {
-                        val candidateJson = JSONObject().apply {
-                            put("candidate", it.sdp)
-                            put("sdpMid", it.sdpMid)
-                            put("sdpMLineIndex", it.sdpMLineIndex)
-                        }
-                        val message = JSONObject().apply {
-                            put("type", "iceCandidate")
-                            put("candidate", candidateJson)
-                        }
-                        writeWsFrame(client.getOutputStream(), message.toString().toByteArray(), 1)
-                    } catch (e: IOException) {
-                        Log.e(tag, "Failed to send ICE candidate", e)
-                    }
-                }
-            }
-
-            override fun requestKeyFrame() {
-                Log.d(tag, "Keyframe requested by remote")
-                videoSource.capturerObserver.onCapturerStarted(true)
-            }
-        }
-
-        val peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)
-        peerConnection?.addTransceiver(videoTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
-        peerConnection?.addTransceiver(audioTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
-        return peerConnection
     }
 
     @Throws(IOException::class)
@@ -671,14 +698,14 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         if (b1 == -1) return null
 
         val opCode = b1 and 0x0F
-        if (opCode == 8) return null
-        if (opCode != 1 && opCode != 2) return null
+        if (opCode == 8) return null // Close frame
+        if (opCode != 1 && opCode != 2) return null // We only support text and binary frames
 
         val b2 = stream.read()
         if (b2 == -1) return null
 
         val isMasked = (b2 and 0x80) != 0
-        if (!isMasked) return null
+        if (!isMasked) return null // All client frames must be masked
 
         var payloadLength = (b2 and 0x7F).toLong()
         if (payloadLength == 126L) {
@@ -715,7 +742,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         }
         return payload
     }
-    
+
     private fun writeToWebsocket(data: ByteArray) {
         synchronized(webSocketClients) {
             val clientsToRemove = mutableListOf<Socket>()
@@ -797,13 +824,13 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         }
     }
 
-    fun appendToSerialLog(data: ByteArray) {
+    private fun appendToSerialLog(data: ByteArray) {
         val prefs = application.getSharedPreferences("serial_settings", Context.MODE_PRIVATE)
         val displayMode = prefs.getString("display_mode", "Raw")
         val newLog = if (displayMode == "Hex") {
-             data.toHexString()
+            data.toHexString()
         } else {
-             String(data)
+            String(data)
         }
         _uiState.update { it.copy(serialLog = _uiState.value.serialLog + newLog) }
     }

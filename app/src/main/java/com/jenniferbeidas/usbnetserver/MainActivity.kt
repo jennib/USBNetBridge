@@ -96,6 +96,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
+
+            if (uiState.permissionRequestDevice != null) {
+                findAndConnectDevice(uiState.permissionRequestDevice!!)
+                viewModel.permissionRequestCompleted()
+            }
+
             MainContent(uiState, onLaunchMacroEditor = {
                 macroEditorResultLauncher.launch(Intent(this, MacroEditorActivity::class.java))
             })
