@@ -7,8 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Bundle
@@ -21,9 +19,9 @@ import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -67,9 +65,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.toColorInt
 import com.google.accompanist.flowlayout.FlowRow
 import com.google.accompanist.flowlayout.MainAxisAlignment
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -81,6 +79,7 @@ class MainActivity : ComponentActivity() {
 
     private val actionUsbPermission = "com.jenniferbeidas.usbnetserver.USB_PERMISSION"
 
+    @ExperimentalGetImage
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -97,6 +96,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
+
+            if (uiState.permissionRequestDevice != null) {
+                findAndConnectDevice(uiState.permissionRequestDevice!!)
+                viewModel.permissionRequestCompleted()
+            }
+
             MainContent(uiState, onLaunchMacroEditor = {
                 macroEditorResultLauncher.launch(Intent(this, MacroEditorActivity::class.java))
             })
@@ -182,7 +187,7 @@ class MainActivity : ComponentActivity() {
     private fun findAndConnectDevice(device: UsbDevice) {
         val usbManager = getSystemService(USB_SERVICE) as UsbManager
         if (!usbManager.hasPermission(device)) {
-            val flags = PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            val flags = PendingIntent.FLAG_IMMUTABLE
             val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(actionUsbPermission), flags)
             usbManager.requestPermission(device, permissionIntent)
         } else {
@@ -190,6 +195,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @ExperimentalGetImage
     @Composable
     fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit) {
         val context = LocalContext.current
@@ -287,8 +293,8 @@ class MainActivity : ComponentActivity() {
                         ) {
                              if (uiState.networkStatus.isNotBlank()) Text(text = uiState.networkStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.cameraStatus.isNotBlank()) Text(text = uiState.cameraStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
-                             if (uiState.httpStatus.isNotBlank()) Text(text = uiState.httpStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
                              if (uiState.tcpProxyStatus.isNotBlank()) Text(text = uiState.tcpProxyStatus, color = contentColor, style = MaterialTheme.typography.bodySmall)
+                             if (uiState.webSocketUrl.isNotBlank()) Text(text = uiState.webSocketUrl, color = contentColor, style = MaterialTheme.typography.bodySmall)
                         }
 
                         // Macro Buttons
@@ -309,12 +315,12 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 uiState.macros.forEach { macro ->
                                     val buttonColor = if (macro.colorHex != null && macro.colorHex.isNotEmpty()) {
-                                        Color(android.graphics.Color.parseColor(macro.colorHex))
+                                        Color(macro.colorHex.toColorInt())
                                     } else {
                                         MaterialTheme.colorScheme.primary
                                     }
                                     Button(
-                                        onClick = { viewModel.sendMacroCommand(macro.command) },
+                                        onClick = { viewModel.sendStringCommand(macro.command) },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
                                     ) {
@@ -329,11 +335,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @ExperimentalGetImage
     @Composable
     fun CameraPreview(viewModel: MainViewModel, rotation: Int) {
         val lifecycleOwner = LocalLifecycleOwner.current
         val context = LocalContext.current
-        val previewView = remember { androidx.camera.view.PreviewView(context) }
+        val previewView = remember {
+            PreviewView(context).apply {
+                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            }
+        }
 
         LaunchedEffect(rotation) {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -350,11 +361,7 @@ class MainActivity : ComponentActivity() {
                     .build()
 
                 imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                    val jpeg = imageProxy.toJpeg(rotation)
-                    if (jpeg != null) {
-                        viewModel.updateLatestJpeg(jpeg)
-                    }
-                    imageProxy.close()
+                    viewModel.processFrame(imageProxy)
                 }
 
                 try {
@@ -365,7 +372,7 @@ class MainActivity : ComponentActivity() {
                         preview,
                         imageAnalysis
                     )
-                    viewModel.startCameraAndAudioStreamServer()
+                    viewModel.startWebRtc()
                 } catch (e: Exception) {
                     Log.e(tag, "Use case binding failed", e)
                 }
@@ -373,26 +380,5 @@ class MainActivity : ComponentActivity() {
         }
 
         AndroidView({ previewView }, modifier = Modifier.fillMaxSize())
-    }
-
-    @OptIn(ExperimentalGetImage::class)
-    private fun ImageProxy.toJpeg(userRotation: Int): ByteArray? {
-        val bitmap = this.toBitmap()
-        if (bitmap == null) {
-            Log.e(tag, "Failed to convert ImageProxy to Bitmap.")
-            return null
-        }
-
-        val totalRotation = (this.imageInfo.rotationDegrees + userRotation) % 360
-        val rotatedBitmap = if (totalRotation != 0) {
-            val matrix = Matrix().apply { postRotate(totalRotation.toFloat()) }
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        } else {
-            bitmap
-        }
-
-        val outputStream = ByteArrayOutputStream()
-        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-        return outputStream.toByteArray()
     }
 }

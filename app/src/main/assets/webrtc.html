@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>USB Net Bridge</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            text-align: center;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .header img {
+            width: 40px;
+            height: 40px;
+            margin-right: 15px;
+        }
+        .header h1 {
+            font-size: 2em;
+            margin: 0;
+            font-weight: 300;
+        }
+        video {
+            background-color: #000;
+            border: 1px solid #333;
+            width: 90%;
+            max-width: 640px;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .status {
+            margin-top: 15px;
+            color: #aaa;
+            font-size: 0.9em;
+        }
+        .section-title {
+            margin-top: 30px;
+            margin-bottom: 10px;
+            font-size: 1.5em;
+            font-weight: 300;
+            color: #e0e0e0;
+        }
+        #serial-output {
+            width: 90%;
+            max-width: 640px;
+            height: 200px;
+            border: 1px solid #333;
+            padding: 10px;
+            overflow-y: scroll;
+            text-align: left;
+            margin: 0 auto 20px auto;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            font-family: "Courier New", Courier, monospace;
+        }
+        #command-container {
+            margin: 20px auto;
+            width: 90%;
+            max-width: 640px;
+            display: flex;
+            gap: 10px;
+        }
+        #command-input {
+            flex-grow: 1;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #333;
+            background-color: #2c2c2c;
+            color: #e0e0e0;
+        }
+        #send-button {
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: none;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #send-button:hover {
+            background-color: #45a049;
+        }
+        #macro-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            width: 90%;
+            max-width: 640px;
+            margin: 0 auto 20px auto;
+        }
+        .macro-button, .edit-macros-btn {
+            padding: 10px 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background-color: #333;
+            color: #e0e0e0;
+            cursor: pointer;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        .macro-button:hover, .edit-macros-btn:hover {
+            background-color: #454545;
+            border-color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <!-- Replace with a proper logo if available -->
+        <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2U4ZThlOCIgd2lkdGg9IjQwcHgiIGhlaWdodD0iNDBweCI+PHBhdGggZD0iTTAgMGgyNHYyNEgwVjB6IiBmaWxsPSJub25lIi8+PHBhdGggZD0iTTcgM2g0djRoLTR6bTYgMGg0djRoLTR6bS02IDZoNHY0aC00em02IDBoNHY0aC00ek0zIDNoNHY0SDN6bTYgMGg0djRIM3ptNiAwaDR2NEgxNXpNNyA5aDR2NEg3em0tNCA2aDR2NGgtNHptNiAwaDR2NGgtNHptNiAwaDR2NGgtNHoiLz48L3N2Zz4=" alt="App Logo">
+        <h1>USB Net Bridge</h1>
+    </div>
+    
+    <video id="video" autoplay playsinline muted controls></video>
+    <div class="status" id="status">Initializing...</div>
+
+    <h2 class="section-title">Serial Console</h2>
+    <div id="serial-output"></div>
+
+    <div id="command-container">
+        <input type="text" id="command-input" placeholder="Enter serial command...">
+        <button id="send-button" onclick="sendSerialCommand()">Send</button>
+    </div>
+
+    <h2 class="section-title">Macros</h2>
+    <div id="macro-buttons"></div>
+    <button class="edit-macros-btn" onclick="editMacros()">Edit Macros</button>
+
+    <script>
+        console.log("--- WebRTC Client Script Starting ---");
+        
+        const video = document.getElementById('video');
+        const statusDiv = document.getElementById('status');
+        const serialOutput = document.getElementById('serial-output');
+        const macroButtons = document.getElementById('macro-buttons');
+        const commandInput = document.getElementById('command-input');
+
+        commandInput.addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                sendSerialCommand();
+            }
+        });
+        
+        let lastVideoTime = -1;
+        let candidateQueue = [];
+        let isRemoteDescriptionSet = false;
+
+        function logSerial(message) {
+            const newContent = document.createElement('div');
+            newContent.textContent = message;
+            serialOutput.appendChild(newContent);
+            serialOutput.scrollTop = serialOutput.scrollHeight;
+        }
+
+        function checkVideo() {
+            if (video.readyState < 2) {
+                setTimeout(checkVideo, 1000);
+                return;
+            }
+            
+            if (video.currentTime === lastVideoTime) {
+                console.log("CLIENT: Video seems frozen. Requesting Keyframe.");
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'requestKeyFrame' }));
+                }
+            }
+            lastVideoTime = video.currentTime;
+            setTimeout(checkVideo, 3000);
+        }
+
+        const pc = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                ws.send(JSON.stringify({ type: 'iceCandidate', candidate: event.candidate.toJSON() }));
+            }
+        };
+
+        pc.ontrack = (event) => {
+            console.log("CLIENT: Received remote track:", event.track.kind);
+
+            let stream = video.srcObject;
+            if (!stream) {
+                stream = new MediaStream();
+                video.srcObject = stream;
+            }
+            stream.addTrack(event.track);
+
+            video.play().catch(e => console.error("Autoplay failed:", e));
+            
+            if (event.track.kind === 'video') {
+                 setTimeout(checkVideo, 5000);
+            }
+        };
+
+        pc.onconnectionstatechange = () => {
+            const ipAddress = window.location.hostname;
+            console.log("Connection State:", pc.connectionState);
+            statusDiv.innerText = `State: ${pc.connectionState} @ ${ipAddress}`;
+        };
+
+        const ws = new WebSocket(`ws://${window.location.host}/webrtc`);
+
+        ws.onopen = () => {
+            console.log("CLIENT: WebSocket Connected");
+            ws.send(JSON.stringify({ type: 'getMacros' }));
+        };
+
+        ws.onerror = (error) => { console.error("CLIENT: WebSocket Error", error); };
+
+        ws.onmessage = async (event) => {
+            try {
+                const message = JSON.parse(event.data);
+
+                if (message.type === 'offer') {
+                    console.log("CLIENT: Received Offer.");
+                    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: message.sdp }));
+                    isRemoteDescriptionSet = true;
+                    console.log("CLIENT: Remote Description Set.");
+
+                    while (candidateQueue.length > 0) {
+                        console.log("CLIENT: Flushing queued candidate.");
+                        await pc.addIceCandidate(candidateQueue.shift());
+                    }
+
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify(pc.localDescription));
+
+                } else if (message.type === 'iceCandidate') {
+                    const candidateInit = {
+                        candidate: message.candidate.candidate,
+                        sdpMid: message.candidate.sdpMid,
+                        sdpMLineIndex: message.candidate.sdpMLineIndex
+                    };
+
+                    if (!isRemoteDescriptionSet) {
+                        console.log("CLIENT: Queued ICE Candidate.");
+                        candidateQueue.push(new RTCIceCandidate(candidateInit));
+                    } else {
+                        await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
+                    }
+                } else if (message.type === 'macros') {
+                    populateMacroButtons(JSON.parse(message.data));
+                }
+            } catch (e) {
+                 const reader = new FileReader();
+                 reader.onload = function() {
+                     logSerial(reader.result);
+                 };
+                 reader.readAsText(event.data);
+            }
+        };
+
+        function populateMacroButtons(macros) {
+            macroButtons.innerHTML = '';
+            macros.forEach(macro => {
+                const button = document.createElement('button');
+                button.className = 'macro-button';
+                button.textContent = macro.name;
+                if (macro.colorHex) {
+                    button.style.backgroundColor = macro.colorHex;
+                }
+                button.onclick = () => sendStringCommand(macro.command);
+                macroButtons.appendChild(button);
+            });
+        }
+
+        function sendStringCommand(command) {
+            ws.send(JSON.stringify({ type: 'sendSerial', command: command }));
+        }
+
+        function sendSerialCommand() {
+            const command = commandInput.value;
+            if (command) {
+                sendStringCommand(command);
+                commandInput.value = '';
+            }
+        }
+
+        function editMacros() {
+            window.open('/macro-editor', '_blank');
+        }
+    </script>
+</body>
+</html>

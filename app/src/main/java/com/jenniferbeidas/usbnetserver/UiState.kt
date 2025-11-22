@@ -6,13 +6,14 @@ data class UiState(
     val statusMessage: String = "Initializing...",
     val networkStatus: String = "",
     val cameraStatus: String = "",
-    val httpStatus: String = "",
     val tcpProxyStatus: String = "",
+    val webSocketUrl: String = "",
     val serialLog: String = "",
     val hasCameraPermission: Boolean = false,
     val hasAudioPermission: Boolean = false,
     val isCameraReady: Boolean = false,
     val macros: List<Macro> = emptyList(),
     val discoveredDevice: UsbDevice? = null,
-    val isConnected: Boolean = false
+    val isConnected: Boolean = false,
+    val permissionRequestDevice: UsbDevice? = null
 )
