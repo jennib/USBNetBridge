@@ -53,6 +53,7 @@ class SerialConnectionManager(
             it.setDataBits(prefs.getInt("data_bits", 8))
             it.setStopBits(prefs.getInt("stop_bits", UsbSerialInterface.STOP_BITS_1))
             it.setParity(prefs.getInt("parity", UsbSerialInterface.PARITY_NONE))
+            it.setFlowControl(UsbSerialInterface.FLOW_CONTROL_OFF)
             it.read { data ->
                 onDataReceived(data)
             }
