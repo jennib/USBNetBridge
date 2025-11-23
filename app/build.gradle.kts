@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.jenniferbeidas.usbnetserver"
-        minSdk = 33
+        minSdk = 23 //33
         targetSdk = 35
         versionCode = 4
         versionName = "1.1.1"
