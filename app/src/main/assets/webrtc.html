@@ -280,7 +280,7 @@
         }
 
         function sendStringCommand(command) {
-            ws.send(JSON.stringify({ type: 'sendSerial', command: command }));
+            ws.send(JSON.stringify({ type: 'sendSerial', command: command + '\n'}));
         }
 
         function sendSerialCommand() {

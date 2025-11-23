@@ -48,7 +48,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             val inboundData = "IN: ".toByteArray() + data
             appendToSerialLog(inboundData)
             writeToWebsocket(inboundData)
-            writeToTcp(inboundData)
+            writeToTcp(data)
         },
         onStatusUpdate = { message -> updateStatusMessage(message) }
     )
@@ -142,7 +142,14 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     fun sendStringCommand(command: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val data = if (command.startsWith("0x")) {
-                command.substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                try {
+                    command.trim().substring(2).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                } catch (e: NumberFormatException) {
+                    Log.e(tag, "Invalid hex string: $command", e)
+                    // Optionally notify the user of the error
+                    updateStatusMessage("Error: Invalid hexadecimal command.")
+                    return@launch
+                }
             } else {
                 command.replace("\\n", "\n").replace("\\r", "\r").toByteArray()
             }
