@@ -69,6 +69,7 @@ dependencies {
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets:$ktorVersion")
+    implementation("io.ktor:ktor-server-html-builder:$ktorVersion")
     implementation("com.dafruits:webrtc:123.0.0")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

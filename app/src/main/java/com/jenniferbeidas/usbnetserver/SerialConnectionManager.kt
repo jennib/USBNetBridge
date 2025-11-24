@@ -24,7 +24,7 @@ class SerialConnectionManager(
 
         // The UsbSerialDevice takes ownership of the connection.
         // We try probing first, as it's the most reliable for composite devices.
-        serialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection)
+        serialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
 
         // If both failed, the device is not supported.
         if (serialDevice == null) {

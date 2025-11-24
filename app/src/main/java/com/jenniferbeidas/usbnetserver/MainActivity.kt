@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -104,7 +105,7 @@ class MainActivity : ComponentActivity() {
 
             MainContent(uiState, onLaunchMacroEditor = {
                 macroEditorResultLauncher.launch(Intent(this, MacroEditorActivity::class.java))
-            })
+            }, onSwitchCamera = { viewModel.selectNextCamera() })
         }
 
         val permissionsToRequest = mutableListOf<String>()
@@ -197,7 +198,7 @@ class MainActivity : ComponentActivity() {
 
     @ExperimentalGetImage
     @Composable
-    fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit) {
+    fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit, onSwitchCamera: () -> Unit) {
         val context = LocalContext.current
         val backgroundColor = Color.Black.copy(alpha = 0.7f)
         val contentColor = Color.White
@@ -205,7 +206,7 @@ class MainActivity : ComponentActivity() {
 
         Box(modifier = Modifier.fillMaxSize()) {
             if (uiState.hasCameraPermission) {
-                CameraPreview(viewModel, rotation)
+                CameraPreview(viewModel, rotation, uiState.selectedCamera)
             }
 
             // Main UI content column
@@ -219,6 +220,15 @@ class MainActivity : ComponentActivity() {
                         .padding(16.dp),
                     horizontalArrangement = Arrangement.End
                 ) {
+                    if (uiState.availableCameras.size > 1) {
+                        IconButton(
+                            onClick = onSwitchCamera,
+                            modifier = Modifier.background(backgroundColor, CircleShape)
+                        ) {
+                            Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", tint = contentColor)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     IconButton(
                         onClick = onLaunchMacroEditor,
                         modifier = Modifier.background(backgroundColor, CircleShape)
@@ -337,7 +347,7 @@ class MainActivity : ComponentActivity() {
 
     @ExperimentalGetImage
     @Composable
-    fun CameraPreview(viewModel: MainViewModel, rotation: Int) {
+    fun CameraPreview(viewModel: MainViewModel, rotation: Int, cameraSelector: CameraSelector) {
         val lifecycleOwner = LocalLifecycleOwner.current
         val context = LocalContext.current
         val previewView = remember {
@@ -346,7 +356,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        LaunchedEffect(rotation) {
+        LaunchedEffect(rotation, cameraSelector) {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
             cameraProviderFuture.addListener({
                 val cameraProvider = cameraProviderFuture.get()
@@ -368,7 +378,7 @@ class MainActivity : ComponentActivity() {
                     cameraProvider.unbindAll()
                     cameraProvider.bindToLifecycle(
                         lifecycleOwner,
-                        CameraSelector.DEFAULT_BACK_CAMERA,
+                        cameraSelector,
                         preview,
                         imageAnalysis
                     )

@@ -1,6 +1,7 @@
 package com.jenniferbeidas.usbnetserver
 
 import android.hardware.usb.UsbDevice
+import androidx.camera.core.CameraSelector
 
 data class UiState(
     val statusMessage: String = "Initializing...",
@@ -15,5 +16,7 @@ data class UiState(
     val macros: List<Macro> = emptyList(),
     val discoveredDevice: UsbDevice? = null,
     val isConnected: Boolean = false,
-    val permissionRequestDevice: UsbDevice? = null
+    val permissionRequestDevice: UsbDevice? = null,
+    val availableCameras: List<CameraSelector> = emptyList(),
+    val selectedCamera: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 )

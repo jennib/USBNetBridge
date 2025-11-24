@@ -8,8 +8,11 @@ import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
 import android.util.Base64
 import android.util.Log
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
@@ -786,9 +789,36 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
 
     fun setCameraPermission(granted: Boolean) {
         _uiState.update { it.copy(hasCameraPermission = granted) }
-        if(!granted) {
+        if (granted) {
+            queryAvailableCameras()
+        } else {
             updateStatusMessage("Camera permission is required for preview.")
         }
+    }
+
+    fun queryAvailableCameras() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(application)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            val cameraSelectors = mutableListOf<CameraSelector>()
+            if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                cameraSelectors.add(CameraSelector.DEFAULT_BACK_CAMERA)
+            }
+            if (cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                cameraSelectors.add(CameraSelector.DEFAULT_FRONT_CAMERA)
+            }
+            _uiState.update { it.copy(availableCameras = cameraSelectors) }
+        }, ContextCompat.getMainExecutor(application))
+    }
+
+    fun selectNextCamera() {
+        val currentSelector = _uiState.value.selectedCamera
+        val availableCameras = _uiState.value.availableCameras
+        if (availableCameras.isEmpty()) return
+
+        val currentIndex = availableCameras.indexOf(currentSelector)
+        val nextIndex = (currentIndex + 1) % availableCameras.size
+        _uiState.update { it.copy(selectedCamera = availableCameras[nextIndex]) }
     }
 
     fun setAudioPermission(granted: Boolean) {
