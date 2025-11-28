@@ -3,6 +3,7 @@ package com.jenniferbeidas.usbnetserver
 import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.util.Log
 import com.felhr.usbserial.UsbSerialDevice
 import com.felhr.usbserial.UsbSerialInterface
 
@@ -13,6 +14,7 @@ class SerialConnectionManager(
     private val onStatusUpdate: (String) -> Unit
 ) {
     private var serialDevice: UsbSerialDevice? = null
+    private val tag = "SerialConnectionManager"
 
     fun open(device: UsbDevice): Boolean {
         close() // Close existing connection first.
@@ -22,25 +24,20 @@ class SerialConnectionManager(
             return false
         }
 
-        // The UsbSerialDevice takes ownership of the connection.
-        // We try probing first, as it's the most reliable for composite devices.
         serialDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, -1)
 
-        // If both failed, the device is not supported.
         if (serialDevice == null) {
             onStatusUpdate("Device not supported. Please use a standard serial device.")
-            connection.close() // We must close the connection manually here.
+            connection.close() 
             return false
         }
 
-        // Now, try to open the created device.
         if (serialDevice!!.open()) {
             configureAndListen(device)
             return true
         } else {
             onStatusUpdate("Failed to open serial port. Is the device supported?")
-            // The UsbSerialDevice's close() method also closes the underlying connection.
-            serialDevice!!.close() 
+            serialDevice!!.close()
             serialDevice = null
             return false
         }
@@ -55,22 +52,31 @@ class SerialConnectionManager(
             it.setParity(prefs.getInt("parity", UsbSerialInterface.PARITY_NONE))
             it.setFlowControl(UsbSerialInterface.FLOW_CONTROL_OFF)
             it.read { data ->
-                onDataReceived(data)
+                try {
+                    onDataReceived(data)
+                } catch (e: Exception) {
+                    Log.e(tag, "Error processing received data", e)
+                }
             }
             onStatusUpdate("Connected to ${device.deviceName}")
         }
     }
 
     fun write(data: ByteArray) {
-        if (serialDevice != null) {
+        try {
             serialDevice?.write(data)
-        } else {
-            onStatusUpdate("Cannot send data: not connected.")
+        } catch (e: Exception) {
+            Log.e(tag, "Error writing to serial port", e)
+            onStatusUpdate("Error writing to serial port: ${e.message}")
         }
     }
 
     fun close() {
-        serialDevice?.close()
+        try {
+            serialDevice?.close()
+        } catch (e: Exception) {
+            Log.e(tag, "Error closing serial port", e)
+        }
         serialDevice = null
     }
 

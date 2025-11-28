@@ -119,7 +119,7 @@
         <h1>USB Net Bridge</h1>
     </div>
     
-    <video id="video" autoplay playsinline muted controls></video>
+    <video id="video" autoplay playsinline controls></video>
     <div class="status" id="status">Initializing...</div>
 
     <h2 class="section-title">Serial Console</h2>
@@ -138,6 +138,8 @@
         console.log("--- WebRTC Client Script Starting ---");
         
         const video = document.getElementById('video');
+        video.volume = 0.25; // Set initial volume to 25%
+
         const statusDiv = document.getElementById('status');
         const serialOutput = document.getElementById('serial-output');
         const macroButtons = document.getElementById('macro-buttons');
