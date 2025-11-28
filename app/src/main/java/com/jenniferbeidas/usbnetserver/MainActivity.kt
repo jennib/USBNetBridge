@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -105,7 +106,7 @@ class MainActivity : ComponentActivity() {
 
             MainContent(uiState, onLaunchMacroEditor = {
                 macroEditorResultLauncher.launch(Intent(this, MacroEditorActivity::class.java))
-            }, onSwitchCamera = { viewModel.selectNextCamera() })
+            }, onSwitchCamera = { viewModel.selectNextCamera() }, onResetSerial = { viewModel.resetSerialConnection() })
         }
 
         val permissionsToRequest = mutableListOf<String>()
@@ -198,7 +199,7 @@ class MainActivity : ComponentActivity() {
 
     @ExperimentalGetImage
     @Composable
-    fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit, onSwitchCamera: () -> Unit) {
+    fun MainContent(uiState: UiState, onLaunchMacroEditor: () -> Unit, onSwitchCamera: () -> Unit, onResetSerial: () -> Unit) {
         val context = LocalContext.current
         val backgroundColor = Color.Black.copy(alpha = 0.7f)
         val contentColor = Color.White
@@ -229,6 +230,13 @@ class MainActivity : ComponentActivity() {
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                     }
+                    IconButton(
+                        onClick = onResetSerial,
+                        modifier = Modifier.background(backgroundColor, CircleShape)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reset Serial", tint = contentColor)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = onLaunchMacroEditor,
                         modifier = Modifier.background(backgroundColor, CircleShape)

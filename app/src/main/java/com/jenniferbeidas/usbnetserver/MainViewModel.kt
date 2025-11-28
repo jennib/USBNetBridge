@@ -133,6 +133,14 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         onUsbDeviceDetached()
     }
 
+    fun resetSerialConnection() {
+        viewModelScope.launch(Dispatchers.IO) {
+            disconnect()
+            kotlinx.coroutines.delay(500) // Small delay to allow resources to be released
+            connectToFirstAvailableDevice()
+        }
+    }
+
     fun connectToFirstAvailableDevice() {
         viewModelScope.launch(Dispatchers.IO) {
             if (_uiState.value.isConnected) return@launch
@@ -651,6 +659,9 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                     "sendSerial" -> {
                         val command = message.getString("command")
                         sendStringCommand(command)
+                    }
+                    "resetSerial" -> {
+                        resetSerialConnection()
                     }
                     "saveMacros" -> {
                         val macrosJson = message.getString("data")

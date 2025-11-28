@@ -97,7 +97,7 @@
             max-width: 640px;
             margin: 0 auto 20px auto;
         }
-        .macro-button, .edit-macros-btn {
+        .macro-button, .edit-macros-btn, .reset-serial-btn {
             padding: 10px 15px;
             border-radius: 5px;
             border: 1px solid #444;
@@ -106,7 +106,7 @@
             cursor: pointer;
             transition: background-color 0.3s, border-color 0.3s;
         }
-        .macro-button:hover, .edit-macros-btn:hover {
+        .macro-button:hover, .edit-macros-btn:hover, .reset-serial-btn:hover {
             background-color: #454545;
             border-color: #666;
         }
@@ -133,6 +133,7 @@
     <h2 class="section-title">Macros</h2>
     <div id="macro-buttons"></div>
     <button class="edit-macros-btn" onclick="editMacros()">Edit Macros</button>
+    <button class="reset-serial-btn" onclick="resetSerial()">Reset Serial</button>
 
     <script>
         console.log("--- WebRTC Client Script Starting ---");
@@ -295,6 +296,10 @@
 
         function editMacros() {
             window.open('/macro-editor', '_blank');
+        }
+
+        function resetSerial() {
+            ws.send(JSON.stringify({ type: 'resetSerial' }));
         }
     </script>
 </body>
